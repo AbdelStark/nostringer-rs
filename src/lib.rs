@@ -274,6 +274,62 @@ mod tests {
     }
 
     #[test]
+    fn test_invalid_signature() {
+        let seckey = [
+            59, 148, 11, 85, 134, 130, 61, 253, 2, 174, 59, 70, 27, 180, 51, 107, 94, 203, 174,
+            253, 102, 39, 170, 146, 46, 252, 4, 143, 236, 12, 136, 28,
+        ];
+        let pubkey = [
+            2, 29, 21, 35, 7, 198, 183, 43, 14, 208, 65, 139, 14, 112, 205, 128, 231, 245, 41, 91,
+            141, 134, 245, 114, 45, 63, 82, 19, 251, 210, 57, 79, 54,
+        ];
+
+        // Sign a message
+        let msg = b"Original message";
+        let signature = sign(msg, seckey).unwrap();
+        let serialize_sig = signature.serialize_compact();
+
+        // Verify with a different message
+        let wrong_msg = b"Different message";
+        assert!(!verify(wrong_msg, serialize_sig, pubkey).unwrap());
+
+        // Tamper with the signature
+        let mut tampered_sig = serialize_sig;
+        tampered_sig[0] ^= 0x01; // Flip one bit
+
+        // Verify the tampered signature
+        assert!(!verify(msg, tampered_sig, pubkey).unwrap());
+    }
+
+    #[test]
+    fn test_different_message_lengths() {
+        let secp = Secp256k1::new();
+        let mut rng = SecpOsRng;
+
+        // Generate a key pair
+        let mut key_bytes = [0u8; 32];
+        rng.fill_bytes(&mut key_bytes);
+        let secret_key = SecretKey::from_slice(&key_bytes).unwrap();
+        let public_key = PublicKey::from_secret_key(&secp, &secret_key);
+        let pubkey_bytes = public_key.serialize();
+
+        // Test with messages of different lengths
+        let messages = [
+            b"a".to_vec(),
+            b"medium length message".to_vec(),
+            vec![0u8; 1000],  // 1KB message
+            vec![0u8; 10000], // 10KB message
+        ];
+
+        for msg in &messages {
+            let signature = sign(&msg, key_bytes).unwrap();
+            let sig_bytes = signature.serialize_compact();
+
+            assert!(verify(&msg, sig_bytes, pubkey_bytes).unwrap());
+        }
+    }
+
+    #[test]
     fn test_ring_signature() {
         let secp = Secp256k1::new();
         let mut rng = SecpOsRng;
@@ -301,5 +357,65 @@ mod tests {
 
         // Verify that the signature has the correct structure
         assert_eq!(ring_signature.s.len(), public_keys.len());
+    }
+
+    #[test]
+    fn test_ring_sig_different_sizes() {
+        let secp = Secp256k1::new();
+        let mut rng = SecpOsRng;
+        let message = b"Test message for different ring sizes";
+
+        // Test with different ring sizes
+        for size in &[2, 3, 5, 10] {
+            // Generate keys for the ring
+            let mut secret_keys = Vec::with_capacity(*size);
+            let mut public_keys = Vec::with_capacity(*size);
+
+            for _ in 0..*size {
+                let mut key_bytes = [0u8; 32];
+                rng.fill_bytes(&mut key_bytes);
+
+                let secret_key = SecretKey::from_slice(&key_bytes).unwrap();
+                let public_key = PublicKey::from_secret_key(&secp, &secret_key);
+
+                secret_keys.push(secret_key);
+                public_keys.push(public_key);
+            }
+
+            // Sign with each key in the ring
+            for i in 0..*size {
+                let ring_signature = ring_sign(message, &secret_keys[i], &public_keys).unwrap();
+
+                // Verify signature structure
+                assert_eq!(ring_signature.s.len(), *size);
+            }
+        }
+    }
+
+    #[test]
+    fn test_ring_signature_error_cases() {
+        let secp = Secp256k1::new();
+        let mut rng = SecpOsRng;
+
+        // Generate a single key
+        let mut key_bytes = [0u8; 32];
+        rng.fill_bytes(&mut key_bytes);
+        let secret_key = SecretKey::from_slice(&key_bytes).unwrap();
+        let public_key = PublicKey::from_secret_key(&secp, &secret_key);
+
+        // Test ring too small
+        let small_ring = vec![public_key];
+        let result = ring_sign(b"Test", &secret_key, &small_ring);
+        assert!(matches!(result, Err(Error::RingTooSmall)));
+
+        // Test signer key not in ring
+        let mut other_key_bytes = [0u8; 32];
+        rng.fill_bytes(&mut other_key_bytes);
+        let other_secret_key = SecretKey::from_slice(&other_key_bytes).unwrap();
+        let other_public_key = PublicKey::from_secret_key(&secp, &other_secret_key);
+
+        let different_ring = vec![other_public_key, other_public_key]; // Ring without signer's key
+        let result = ring_sign(b"Test", &secret_key, &different_ring);
+        assert!(matches!(result, Err(Error::SignerKeyNotFound)));
     }
 }

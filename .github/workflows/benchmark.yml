@@ -1,0 +1,38 @@
+name: Benchmark PR
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - "src/**"
+      - "benches/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+
+jobs:
+  benchmark:
+    name: Run benchmarks on PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run benchmarks
+        run: cargo bench --bench ring_signatures --bench ecdsa -- --verbose > benchmark_results.txt
+
+      - name: Process benchmark results
+        id: process_results
+        run: |
+          echo 'BENCHMARK_COMMENT<<EOF' >> $GITHUB_ENV
+          echo '### Benchmark Results' >> $GITHUB_ENV
+          echo '```' >> $GITHUB_ENV
+          cat benchmark_results.txt >> $GITHUB_ENV
+          echo '```' >> $GITHUB_ENV
+          echo 'EOF' >> $GITHUB_ENV
+
+      - name: Comment PR
+        uses: thollander/actions-comment-pull-request@v2
+        with:
+          message: ${{ env.BENCHMARK_COMMENT }}
+          comment_tag: benchmark_results
