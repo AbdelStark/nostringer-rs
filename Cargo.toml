@@ -1,6 +1,6 @@
 [package]
 name = "nostringer"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "A blazing fast Rust implementation of unlinkable ring signatures for Nostr, allowing anonymous group signatures with secp256k1 keys"
 authors = ["AbdelStark <@AbdelStark>"]
