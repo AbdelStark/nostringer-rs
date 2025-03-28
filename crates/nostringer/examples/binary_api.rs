@@ -1,6 +1,6 @@
 use hex;
-use k256::{ProjectivePoint, PublicKey, Scalar, elliptic_curve::PrimeField};
-use nostringer::{Error, generate_keypair_hex, sign_binary, verify_binary};
+use k256::{elliptic_curve::PrimeField, ProjectivePoint, PublicKey, Scalar};
+use nostringer::{generate_keypair_hex, sign_binary, verify_binary, Error};
 
 fn main() -> Result<(), Error> {
     println!("Demonstrating the optimized binary API for nostringer");

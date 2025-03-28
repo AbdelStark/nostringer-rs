@@ -1,4 +1,4 @@
-use nostringer::{Error, generate_keypair_hex, generate_keypairs, get_public_keys, sign, verify};
+use nostringer::{generate_keypair_hex, generate_keypairs, get_public_keys, sign, verify, Error};
 
 #[test]
 fn test_sign_verify_round_trip_xonly() {

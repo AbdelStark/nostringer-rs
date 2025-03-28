@@ -242,6 +242,52 @@ fn run_demo() -> Result<()> {
         );
     }
 
+    // Now we will simulate compromising the ring and adding a new unauthorized member
+    let non_ring_member_keypair = generate_keypair_hex("xonly");
+    let compromised_ring = vec![
+        keypair1.public_key_hex.clone(),
+        keypair2.public_key_hex.clone(),
+        keypair3.public_key_hex.clone(),
+        non_ring_member_keypair.public_key_hex.clone(),
+    ];
+
+    // We sign the message again with the compromised ring
+    println!(
+        "\n{}",
+        "6. Signing the message with the compromised ring...".bold()
+    );
+    let compromised_signature = sign(
+        message.as_bytes(),
+        &non_ring_member_keypair.private_key_hex,
+        &compromised_ring,
+    )
+    .context("Failed to create compromised signature")?;
+
+    println!(
+        "\n{}",
+        "7. Verifying the signature with the original ring (should fail)".bold()
+    );
+    let error_thrown = verify(&compromised_signature, message.as_bytes(), &ring_pubkeys).is_err();
+
+    if error_thrown {
+        println!(
+            "\n{} {}",
+            "✓".green().bold(),
+            "Compromised signature was correctly rejected!"
+                .bold()
+                .green()
+        );
+        println!("This shows that the signature is bound to the original ring members.");
+    } else {
+        println!(
+            "\n{} {}",
+            "✗".red().bold(),
+            "Compromised signature was incorrectly verified!"
+                .bold()
+                .red()
+        );
+    }
+
     println!("\n{}", "=== DEMO COMPLETE ===".bold().green());
     Ok(())
 }

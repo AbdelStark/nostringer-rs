@@ -97,11 +97,11 @@
 //! ```
 
 use k256::elliptic_curve::{
-    PrimeField,
     ops::Reduce,
     point::AffineCoordinates,
     rand_core::{self},
     sec1::ToEncodedPoint,
+    PrimeField,
 };
 use k256::{NonZeroScalar, ProjectivePoint, PublicKey, Scalar, SecretKey, U256};
 use rand::rngs::OsRng;

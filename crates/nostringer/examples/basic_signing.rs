@@ -1,4 +1,4 @@
-use nostringer::{Error, generate_keypair_hex, sign, verify};
+use nostringer::{generate_keypair_hex, sign, verify, Error};
 
 fn main() -> Result<(), Error> {
     // Generate three keypairs for our example
