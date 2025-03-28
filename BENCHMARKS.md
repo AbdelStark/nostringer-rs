@@ -9,18 +9,22 @@ This document explains how to run and view the benchmarks for the nostringer lib
 To generate HTML reports with charts, you need gnuplot installed:
 
 #### Ubuntu/Debian
+
 ```bash
 sudo apt update
 sudo apt install gnuplot
 ```
 
 #### macOS
+
 ```bash
 brew install gnuplot
 ```
 
 #### Windows
+
 Install gnuplot from [the official website](http://www.gnuplot.info/download.html) or via package managers like Chocolatey:
+
 ```bash
 choco install gnuplot
 ```
@@ -59,7 +63,7 @@ The report includes line charts comparing the performance across different ring 
 
 ### GitHub Actions Results
 
-The repository includes a GitHub Action workflow that runs benchmarks on each push to the main branch and pull request. 
+The repository includes a GitHub Action workflow that runs benchmarks on each push to the main branch and pull request.
 
 To access these benchmark results:
 
@@ -98,4 +102,4 @@ If you want to add new benchmarks:
 1. Modify the `benches/ring_signatures.rs` file
 2. Add your new benchmark function
 3. Include it in the `criterion_group!` macro
-4. Run `cargo bench` to validate 
+4. Run `cargo bench` to validate

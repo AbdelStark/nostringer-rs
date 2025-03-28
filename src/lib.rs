@@ -7,6 +7,15 @@
 //! Spontaneous Anonymous Group (SAG)-like ring signature scheme over the
 //! secp256k1 curve. It aims for compatibility with the original TS implementation.
 //!
+//! ## Optimized API
+//!
+//! This library provides two sets of APIs:
+//! - Hex-encoded interfaces (`sign`, `verify`, `sign_with_hex`, `verify_with_hex`) that work with hex strings
+//! - Binary interfaces (`sign_binary`, `verify_binary`) that work directly with scalar and curve point types
+//!   for improved performance
+//!
+//! For maximum performance in Rust applications, prefer the binary interfaces when possible.
+//!
 //! ## Usage
 //!
 //! ```rust
@@ -59,6 +68,29 @@
 //!     )?;
 //!     println!("Tampered signature valid: {}", is_tampered_valid);
 //!     assert!(!is_tampered_valid);
+//!
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Binary API Example (more efficient)
+//!
+//! ```rust,no_run
+//! use nostringer::{sign_binary, verify_binary, KeyPair, RingSignatureBinary, Error};
+//! use k256::{Scalar, ProjectivePoint};
+//!
+//! // Assuming you have raw binary keys available:
+//! fn example_binary_api(
+//!     private_key: &Scalar,
+//!     ring_pubkeys: &[ProjectivePoint],
+//!     message: &[u8]
+//! ) -> Result<(), Error> {
+//!     // Sign using binary API (more efficient)
+//!     let binary_signature = sign_binary(message, private_key, ring_pubkeys)?;
+//!
+//!     // Verify using binary API (more efficient)
+//!     let is_valid = verify_binary(&binary_signature, message, ring_pubkeys)?;
+//!     assert!(is_valid);
 //!
 //!     Ok(())
 //! }
@@ -143,6 +175,53 @@ pub struct RingSignature {
     pub s: Vec<String>,
 }
 
+/// A ring signature consisting of an initial commitment value c0 and a vector of s values
+/// with binary representation for better performance
+///
+/// This structure is the optimized binary version of RingSignature.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RingSignatureBinary {
+    /// The initial commitment scalar value (c₀) as a Scalar
+    pub c0: Scalar,
+    /// Vector of scalar values (one for each ring member) as Scalar objects
+    pub s: Vec<Scalar>,
+}
+
+/// A key pair with both private and public keys in binary format for optimized operations
+#[derive(Debug, Clone)]
+pub struct KeyPair {
+    /// Private key as a Scalar
+    pub private_key: Scalar,
+    /// Public key as a ProjectivePoint
+    pub public_key: ProjectivePoint,
+}
+
+/// Converts RingSignatureBinary to RingSignature (binary to hex)
+impl From<&RingSignatureBinary> for RingSignature {
+    fn from(binary: &RingSignatureBinary) -> Self {
+        RingSignature {
+            c0: scalar_to_hex(&binary.c0),
+            s: binary.s.iter().map(scalar_to_hex).collect(),
+        }
+    }
+}
+
+/// Attempts to convert RingSignature to RingSignatureBinary (hex to binary)
+impl TryFrom<&RingSignature> for RingSignatureBinary {
+    type Error = Error;
+
+    fn try_from(sig: &RingSignature) -> Result<Self, Self::Error> {
+        let c0 = hex_to_scalar(&sig.c0)?;
+        let s = sig
+            .s
+            .iter()
+            .map(|s_hex| hex_to_scalar(s_hex))
+            .collect::<Result<Vec<Scalar>, Error>>()?;
+
+        Ok(RingSignatureBinary { c0, s })
+    }
+}
+
 /// A key pair with both private and public keys in hexadecimal format
 ///
 /// This structure holds a key pair for use in ring signatures:
@@ -186,88 +265,43 @@ pub fn sign(
     private_key_hex: &str,
     ring_pubkeys_hex: &[String],
 ) -> Result<RingSignature, Error> {
-    let ring_size = ring_pubkeys_hex.len();
-    if ring_size < 2 {
-        return Err(Error::RingTooSmall(ring_size));
-    }
+    // Use sign_with_hex instead, which is now the hex wrapper
+    sign_with_hex(message, private_key_hex, ring_pubkeys_hex)
+}
 
-    // Convert private key from hex to scalar
-    let d = hex_to_scalar(private_key_hex)?;
-    if d == Scalar::ZERO {
-        return Err(Error::PrivateKeyFormat(
-            "Private key scalar cannot be zero".into(),
-        ));
-    }
-    let _d_nonzero =
-        NonZeroScalar::new(d).expect("d was checked non-zero, NonZeroScalar::new must succeed");
-
-    // Convert all public keys to curve points
-    let ring_points: Vec<ProjectivePoint> = ring_pubkeys_hex
+/// Creates a ring signature using hex-encoded inputs (wrapper for sign_binary)
+///
+/// This function is a wrapper around sign_binary, handling hex conversions.
+///
+/// # Arguments
+/// * `message` - The message to sign as a byte array
+/// * `private_key_hex` - The signer's private key as a hex string
+/// * `ring_pubkeys_hex` - The public keys of all ring members as hex strings
+///
+/// # Returns
+/// * `Ok(RingSignature)` - The generated ring signature
+/// * `Err(Error)` - If any step in the signature generation fails
+///
+/// # Errors
+/// Same as sign_binary, plus:
+/// * Errors from hex decoding
+pub fn sign_with_hex(
+    message: &[u8],
+    private_key_hex: &str,
+    ring_pubkeys_hex: &[String],
+) -> Result<RingSignature, Error> {
+    // Convert inputs from hex
+    let private_key = hex_to_scalar(private_key_hex)?;
+    let ring_pubkeys: Vec<ProjectivePoint> = ring_pubkeys_hex
         .iter()
         .map(|pubkey_str| hex_to_point(pubkey_str))
         .collect::<Result<_, _>>()?;
 
-    // Compute the signer's public key point in both normal and negated form
-    let my_point = GENERATOR * d;
-    let flipped_d = d.negate();
-    let flipped_point = GENERATOR * flipped_d;
+    // Call the binary version
+    let binary_signature = sign_binary(message, &private_key, &ring_pubkeys)?;
 
-    // Find the signer's position in the ring
-    let mut signer_index: Option<usize> = None;
-    let mut used_d = d;
-    for (i, p) in ring_points.iter().enumerate() {
-        if p == &my_point {
-            signer_index = Some(i);
-            used_d = d;
-            break;
-        }
-        if p == &flipped_point {
-            signer_index = Some(i);
-            used_d = flipped_d;
-            break;
-        }
-    }
-    let signer_index = signer_index.ok_or(Error::SignerNotInRing)?;
-
-    // Initialize vectors for the signature components
-    let mut r_scalars = vec![Scalar::ZERO; ring_size];
-    let mut c_scalars = vec![Scalar::ZERO; ring_size];
-    let os_rng = OsRng;
-
-    // Generate a random scalar alpha and compute alpha*G
-    let alpha_nonzero = random_non_zero_scalar(os_rng);
-    let alpha = *alpha_nonzero.as_ref();
-    let alpha_g = GENERATOR * alpha;
-
-    // Start the ring signature process at the position after the signer
-    let start_index = (signer_index + 1) % ring_size;
-    c_scalars[start_index] = hash_to_scalar(message, ring_pubkeys_hex, &alpha_g)?;
-
-    // Generate random components for each member and build the ring
-    let mut current_index = start_index;
-    while current_index != signer_index {
-        // Random scalar for this ring member
-        let r_nonzero = random_non_zero_scalar(os_rng);
-        r_scalars[current_index] = *r_nonzero.as_ref();
-
-        // Compute the ring link: x_i = r_i*G + c_i*P_i
-        let xi = (GENERATOR * r_scalars[current_index])
-            + (ring_points[current_index] * c_scalars[current_index]);
-
-        // Hash to get the next challenge
-        let next_index = (current_index + 1) % ring_size;
-        c_scalars[next_index] = hash_to_scalar(message, ring_pubkeys_hex, &xi)?;
-        current_index = next_index;
-    }
-
-    // Complete the ring by computing the signer's s value
-    r_scalars[signer_index] = alpha - (c_scalars[signer_index] * used_d);
-
-    // Convert to hex format and return the signature
-    Ok(RingSignature {
-        c0: scalar_to_hex(&c_scalars[0]),
-        s: r_scalars.iter().map(scalar_to_hex).collect(),
-    })
+    // Convert the binary signature to hex format
+    Ok(RingSignature::from(&binary_signature))
 }
 
 /// Verifies a ring signature against a message and a ring of public keys
@@ -296,42 +330,40 @@ pub fn verify(
     message: &[u8],
     ring_pubkeys_hex: &[String],
 ) -> Result<bool, Error> {
-    let ring_size = ring_pubkeys_hex.len();
-    if ring_size == 0 {
-        return Ok(false);
-    }
-    if signature.s.len() != ring_size {
-        return Err(Error::InvalidSignatureFormat);
-    }
+    // Use verify_with_hex instead, which is now the hex wrapper
+    verify_with_hex(signature, message, ring_pubkeys_hex)
+}
 
-    // Convert c0 from hex to scalar
-    let c0_scalar = hex_to_scalar(&signature.c0)?;
-
-    // Convert all s values from hex to scalars
-    let r_scalars: Vec<Scalar> = signature
-        .s
-        .iter()
-        .map(|s_hex| hex_to_scalar(s_hex))
-        .collect::<Result<_, _>>()?;
-
-    // Convert all public keys to curve points
-    let ring_points: Vec<ProjectivePoint> = ring_pubkeys_hex
+/// Verifies a ring signature using hex-encoded inputs (wrapper for verify_binary)
+///
+/// This function is a wrapper around verify_binary, handling hex conversions.
+///
+/// # Arguments
+/// * `signature` - The hex-encoded ring signature to verify
+/// * `message` - The message that was signed
+/// * `ring_pubkeys_hex` - The public keys of all ring members as hex strings
+///
+/// # Returns
+/// * `Ok(bool)` - Whether the signature is valid
+/// * `Err(Error)` - If any step in the verification process fails
+///
+/// # Errors
+/// Same as verify_binary, plus:
+/// * Errors from hex decoding
+pub fn verify_with_hex(
+    signature: &RingSignature,
+    message: &[u8],
+    ring_pubkeys_hex: &[String],
+) -> Result<bool, Error> {
+    // Convert inputs from hex
+    let binary_signature = RingSignatureBinary::try_from(signature)?;
+    let ring_pubkeys: Vec<ProjectivePoint> = ring_pubkeys_hex
         .iter()
         .map(|pubkey_str| hex_to_point(pubkey_str))
         .collect::<Result<_, _>>()?;
 
-    // Verify the ring by recomputing each link
-    let mut current_c = c0_scalar;
-    for i in 0..ring_size {
-        // Compute x_i = s_i*G + c_i*P_i
-        let xi = (GENERATOR * r_scalars[i]) + (ring_points[i] * current_c);
-        // Hash to get the next challenge
-        current_c = hash_to_scalar(message, ring_pubkeys_hex, &xi)?;
-    }
-
-    // Check if the ring closes (c_n == c₀)
-    let is_valid = current_c.ct_eq(&c0_scalar);
-    Ok(is_valid.into())
+    // Call the binary version
+    verify_binary(&binary_signature, message, &ring_pubkeys)
 }
 
 /// Normalizes a hexadecimal string by removing prefixes and converting to lowercase
@@ -614,4 +646,233 @@ pub fn get_public_keys(keypairs: &[KeyPairHex]) -> Vec<String> {
         .iter()
         .map(|kp| kp.public_key_hex.clone())
         .collect()
+}
+
+/// Creates a ring signature for a message using the provided binary private key and ring of public keys
+///
+/// This function is the optimized binary version of the sign function, avoiding hex conversions.
+///
+/// # Arguments
+/// * `message` - The message to sign as a byte array
+/// * `private_key` - The signer's private key as a Scalar
+/// * `ring_pubkeys` - The public keys of all ring members as ProjectivePoints
+///
+/// # Returns
+/// * `Ok(RingSignatureBinary)` - The generated ring signature in binary format
+/// * `Err(Error)` - If any step in the signature generation fails
+///
+/// # Errors
+/// Returns an error if:
+/// * The ring has fewer than 2 members
+/// * The signer's public key is not in the ring
+/// * Any cryptographic operation fails
+pub fn sign_binary(
+    message: &[u8],
+    private_key: &Scalar,
+    ring_pubkeys: &[ProjectivePoint],
+) -> Result<RingSignatureBinary, Error> {
+    let ring_size = ring_pubkeys.len();
+    if ring_size < 2 {
+        return Err(Error::RingTooSmall(ring_size));
+    }
+
+    if *private_key == Scalar::ZERO {
+        return Err(Error::PrivateKeyFormat(
+            "Private key scalar cannot be zero".into(),
+        ));
+    }
+
+    let d = *private_key;
+    let _d_nonzero =
+        NonZeroScalar::new(d).expect("d was checked non-zero, NonZeroScalar::new must succeed");
+
+    // Compute the signer's public key point in both normal and negated form
+    let my_point = GENERATOR * d;
+    let flipped_d = d.negate();
+    let flipped_point = GENERATOR * flipped_d;
+
+    // Find the signer's position in the ring
+    let mut signer_index: Option<usize> = None;
+    let mut used_d = d;
+    for (i, p) in ring_pubkeys.iter().enumerate() {
+        if p == &my_point {
+            signer_index = Some(i);
+            used_d = d;
+            break;
+        }
+        if p == &flipped_point {
+            signer_index = Some(i);
+            used_d = flipped_d;
+            break;
+        }
+    }
+    let signer_index = signer_index.ok_or(Error::SignerNotInRing)?;
+
+    // Initialize vectors for the signature components
+    let mut r_scalars = vec![Scalar::ZERO; ring_size];
+    let mut c_scalars = vec![Scalar::ZERO; ring_size];
+    let os_rng = OsRng;
+
+    // Generate a random scalar alpha and compute alpha*G
+    let alpha_nonzero = random_non_zero_scalar(os_rng);
+    let alpha = *alpha_nonzero.as_ref();
+    let alpha_g = GENERATOR * alpha;
+
+    // Start the ring signature process at the position after the signer
+    let start_index = (signer_index + 1) % ring_size;
+
+    // Convert public keys to hex for hashing
+    // This is a necessary temporary step as the hash_to_scalar function uses hex strings
+    // A future improvement would be to optimize hash_to_scalar to work with binary directly
+    let ring_pubkeys_hex: Vec<String> = ring_pubkeys
+        .iter()
+        .map(|point| hex::encode(point.to_encoded_point(true).as_bytes()))
+        .collect();
+
+    c_scalars[start_index] = hash_to_scalar(message, &ring_pubkeys_hex, &alpha_g)?;
+
+    // Generate random components for each member and build the ring
+    let mut current_index = start_index;
+    while current_index != signer_index {
+        // Random scalar for this ring member
+        let r_nonzero = random_non_zero_scalar(os_rng);
+        r_scalars[current_index] = *r_nonzero.as_ref();
+
+        // Compute the ring link: x_i = r_i*G + c_i*P_i
+        let xi = (GENERATOR * r_scalars[current_index])
+            + (ring_pubkeys[current_index] * c_scalars[current_index]);
+
+        // Hash to get the next challenge
+        let next_index = (current_index + 1) % ring_size;
+        c_scalars[next_index] = hash_to_scalar(message, &ring_pubkeys_hex, &xi)?;
+        current_index = next_index;
+    }
+
+    // Complete the ring by computing the signer's s value
+    r_scalars[signer_index] = alpha - (c_scalars[signer_index] * used_d);
+
+    // Return the binary signature
+    Ok(RingSignatureBinary {
+        c0: c_scalars[0],
+        s: r_scalars,
+    })
+}
+
+/// Verifies a ring signature against a message and a ring of public keys
+///
+/// This function is the optimized binary version of the verify function, avoiding hex conversions.
+///
+/// # Arguments
+/// * `signature` - The binary ring signature to verify
+/// * `message` - The message that was signed
+/// * `ring_pubkeys` - The public keys of all ring members as ProjectivePoints
+///
+/// # Returns
+/// * `Ok(bool)` - Whether the signature is valid
+/// * `Err(Error)` - If any step in the verification process fails
+///
+/// # Errors
+/// Returns an error if:
+/// * The signature format is invalid
+/// * Any cryptographic operation fails
+pub fn verify_binary(
+    signature: &RingSignatureBinary,
+    message: &[u8],
+    ring_pubkeys: &[ProjectivePoint],
+) -> Result<bool, Error> {
+    let ring_size = ring_pubkeys.len();
+    if ring_size == 0 {
+        return Ok(false);
+    }
+    if signature.s.len() != ring_size {
+        return Err(Error::InvalidSignatureFormat);
+    }
+
+    // Get reference to the components directly
+    let c0_scalar = signature.c0;
+    let r_scalars = &signature.s;
+
+    // Convert public keys to hex for hashing
+    // This is a necessary temporary step as the hash_to_scalar function uses hex strings
+    let ring_pubkeys_hex: Vec<String> = ring_pubkeys
+        .iter()
+        .map(|point| hex::encode(point.to_encoded_point(true).as_bytes()))
+        .collect();
+
+    // Verify the ring by recomputing each link
+    let mut current_c = c0_scalar;
+    for i in 0..ring_size {
+        // Compute x_i = s_i*G + c_i*P_i
+        let xi = (GENERATOR * r_scalars[i]) + (ring_pubkeys[i] * current_c);
+        // Hash to get the next challenge
+        current_c = hash_to_scalar(message, &ring_pubkeys_hex, &xi)?;
+    }
+
+    // Check if the ring closes (c_n == c₀)
+    let is_valid = current_c.ct_eq(&c0_scalar);
+    Ok(is_valid.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ... existing test code ...
+
+    #[test]
+    fn test_binary_api() {
+        // Generate keypairs
+        let keypair1 = generate_keypair_hex("xonly");
+        let keypair2 = generate_keypair_hex("xonly");
+        let keypair3 = generate_keypair_hex("xonly");
+
+        // Convert to binary
+        let _private_key1 = hex_to_scalar(&keypair1.private_key_hex).unwrap();
+        let private_key2 = hex_to_scalar(&keypair2.private_key_hex).unwrap();
+        let _private_key3 = hex_to_scalar(&keypair3.private_key_hex).unwrap();
+
+        let pubkey1 = hex_to_point(&keypair1.public_key_hex).unwrap();
+        let pubkey2 = hex_to_point(&keypair2.public_key_hex).unwrap();
+        let pubkey3 = hex_to_point(&keypair3.public_key_hex).unwrap();
+
+        let ring_binary = vec![pubkey1, pubkey2, pubkey3];
+        let ring_hex = vec![
+            keypair1.public_key_hex.clone(),
+            keypair2.public_key_hex.clone(),
+            keypair3.public_key_hex.clone(),
+        ];
+
+        let message = b"Test message for binary API";
+
+        // Sign with binary API
+        let binary_sig = sign_binary(message, &private_key2, &ring_binary).unwrap();
+
+        // Verify with binary API
+        let binary_verify = verify_binary(&binary_sig, message, &ring_binary).unwrap();
+        assert!(binary_verify, "Binary verification should succeed");
+
+        // Tampered message should fail
+        let tampered = b"Tampered message";
+        let tampered_verify = verify_binary(&binary_sig, tampered, &ring_binary).unwrap();
+        assert!(
+            !tampered_verify,
+            "Verification with tampered message should fail"
+        );
+
+        // Test conversion between hex and binary signatures
+        let hex_sig = RingSignature::from(&binary_sig);
+        let binary_sig2 = RingSignatureBinary::try_from(&hex_sig).unwrap();
+
+        // Verify the converted signature
+        let verify_after_conversion = verify_binary(&binary_sig2, message, &ring_binary).unwrap();
+        assert!(
+            verify_after_conversion,
+            "Verification after conversion should succeed"
+        );
+
+        // Test hex API with the same inputs
+        let hex_sig_direct = sign(message, &keypair2.private_key_hex, &ring_hex).unwrap();
+        let hex_verify = verify(&hex_sig_direct, message, &ring_hex).unwrap();
+        assert!(hex_verify, "Hex verification should succeed");
+    }
 }

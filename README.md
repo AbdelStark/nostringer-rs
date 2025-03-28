@@ -44,15 +44,22 @@ Nostringer is largely inspired by [Monero's Ring Signatures](https://www.getmone
   - [Key Features](#key-features)
   - [Installation](#installation)
   - [Usage](#usage)
+    - [Optimized Binary API](#optimized-binary-api)
   - [Examples](#examples)
   - [Benchmarks](#benchmarks)
     - [Performance Results](#performance-results)
   - [API Reference](#api-reference)
     - [`sign(message: &[u8], private_key_hex: &str, ring_pubkeys_hex: &[String]) -> Result<RingSignature, Error>`](#signmessage-u8-private_key_hex-str-ring_pubkeys_hex-string---resultringsignature-error)
     - [`verify(signature: &RingSignature, message: &[u8], ring_pubkeys_hex: &[String]) -> Result<bool, Error>`](#verifysignature-ringsignature-message-u8-ring_pubkeys_hex-string---resultbool-error)
+    - [`sign_binary(message: &[u8], private_key: &Scalar, ring_pubkeys: &[ProjectivePoint]) -> Result<RingSignatureBinary, Error>`](#sign_binarymessage-u8-private_key-scalar-ring_pubkeys-projectivepoint---resultringsignaturebinary-error)
+    - [`verify_binary(signature: &RingSignatureBinary, message: &[u8], ring_pubkeys: &[ProjectivePoint]) -> Result<bool, Error>`](#verify_binarysignature-ringsignaturebinary-message-u8-ring_pubkeys-projectivepoint---resultbool-error)
+    - [`sign_with_hex(message: &[u8], private_key_hex: &str, ring_pubkeys_hex: &[String]) -> Result<RingSignature, Error>`](#sign_with_hexmessage-u8-private_key_hex-str-ring_pubkeys_hex-string---resultringsignature-error)
+    - [`verify_with_hex(signature: &RingSignature, message: &[u8], ring_pubkeys_hex: &[String]) -> Result<bool, Error>`](#verify_with_hexsignature-ringsignature-message-u8-ring_pubkeys_hex-string---resultbool-error)
     - [`generate_keypair_hex(format: &str) -> KeyPairHex`](#generate_keypair_hexformat-str---keypairhex)
     - [`RingSignature` Struct](#ringsignature-struct)
+    - [`RingSignatureBinary` Struct](#ringsignaturebinary-struct)
     - [`KeyPairHex` Struct](#keypairhex-struct)
+    - [`KeyPair` Struct](#keypair-struct)
     - [`Error` Enum](#error-enum)
   - [Signature Size](#signature-size)
   - [Security Considerations](#security-considerations)
@@ -75,6 +82,7 @@ A **ring signature** solves this by letting an individual sign a message _on beh
 
 - **Unlinkable**: Signatures hide the signer's identity. Two signatures from the same signer cannot be linked cryptographically.
 - **Fast**: Implemented in Rust, leveraging efficient and audited cryptographic primitives from the RustCrypto ecosystem (`k256`, `sha2`).
+- **Optimized API**: Provides both hex-string based API and a more efficient binary API that avoids serialization/deserialization overhead.
 - **Nostr Key Compatibility**: Directly supports standard Nostr key formats (hex strings):
   - 32-byte (64-hex) x-only public keys.
   - 33-byte (66-hex) compressed public keys.
@@ -98,7 +106,7 @@ _(Note: You might need other crates like `hex` or `rand` in your own project dep
 ## Usage
 
 ```rust
-use nostringer_ring::{sign, verify, generate_keypair_hex, RingSignature, Error};
+use nostringer::{sign, verify, generate_keypair_hex, RingSignature, Error};
 
 fn main() -> Result<(), Error> {
     // 1. Setup: Generate keys for the ring members
@@ -150,6 +158,32 @@ fn main() -> Result<(), Error> {
     println!("Tampered signature valid: {}", is_tampered_valid);
     assert!(!is_tampered_valid);
 
+    Ok(())
+}
+```
+
+### Optimized Binary API
+
+For applications requiring maximum performance, we provide a binary API that works directly with the native types, avoiding hex conversion overhead:
+
+```rust
+use nostringer::{sign_binary, verify_binary, KeyPair, RingSignatureBinary, Error};
+use k256::{Scalar, ProjectivePoint};
+
+fn main() -> Result<(), Error> {
+    // Assuming you have raw binary keys available:
+    // (You'd normally get these from elsewhere in your app)
+    let private_key = /* Scalar value */;
+    let ring_pubkeys = /* Vec<ProjectivePoint> */;
+    let message = b"This is a secret message to the group.";
+    
+    // Sign using binary API (more efficient)
+    let binary_signature = sign_binary(message, &private_key, &ring_pubkeys)?;
+    
+    // Verify using binary API (more efficient)
+    let is_valid = verify_binary(&binary_signature, message, &ring_pubkeys)?;
+    println!("Signature valid: {}", is_valid);
+    
     Ok(())
 }
 ```
@@ -219,7 +253,7 @@ Benchmarking Environment:
 
 ### `sign(message: &[u8], private_key_hex: &str, ring_pubkeys_hex: &[String]) -> Result<RingSignature, Error>`
 
-Signs a message using the SAG-like ring signature scheme.
+Signs a message using the SAG-like ring signature scheme. This function is a wrapper around the more efficient `sign_binary` that handles hex conversion.
 
 - **`message`**: The message bytes (`&[u8]`) to sign.
 - **`private_key_hex`**: The signer's private key as a 64-character hex string.
@@ -228,12 +262,38 @@ Signs a message using the SAG-like ring signature scheme.
 
 ### `verify(signature: &RingSignature, message: &[u8], ring_pubkeys_hex: &[String]) -> Result<bool, Error>`
 
-Verifies a ring signature against a message and the ring of public keys.
+Verifies a ring signature against a message and the ring of public keys. This function is a wrapper around the more efficient `verify_binary` that handles hex conversion.
 
 - **`signature`**: A reference to the `RingSignature` object (`{ c0, s }`).
 - **`message`**: The original message bytes (`&[u8]`) that were allegedly signed.
 - **`ring_pubkeys_hex`**: A slice of public key hex strings representing the ring. **Must** be identical (including order) to the ring used during signing.
 - **Returns**: A `Result` containing `true` if the signature is valid for the message and ring, or `false` if it's invalid. Returns an `Error` if inputs are malformed (e.g., wrong signature length, invalid hex).
+
+### `sign_binary(message: &[u8], private_key: &Scalar, ring_pubkeys: &[ProjectivePoint]) -> Result<RingSignatureBinary, Error>`
+
+Optimized version of sign that works directly with binary types, avoiding hex conversion overhead.
+
+- **`message`**: The message bytes (`&[u8]`) to sign.
+- **`private_key`**: The signer's private key as a `k256::Scalar`.
+- **`ring_pubkeys`**: A slice of public keys as `k256::ProjectivePoint` representing the ring members.
+- **Returns**: A `Result` containing the `RingSignatureBinary` on success, or an `Error` on failure.
+
+### `verify_binary(signature: &RingSignatureBinary, message: &[u8], ring_pubkeys: &[ProjectivePoint]) -> Result<bool, Error>`
+
+Optimized version of verify that works directly with binary types, avoiding hex conversion overhead.
+
+- **`signature`**: A reference to the `RingSignatureBinary` object.
+- **`message`**: The original message bytes (`&[u8]`) that were allegedly signed.
+- **`ring_pubkeys`**: A slice of public keys as `k256::ProjectivePoint` representing the ring.
+- **Returns**: A `Result` containing `true` if the signature is valid, or `false` if it's invalid.
+
+### `sign_with_hex(message: &[u8], private_key_hex: &str, ring_pubkeys_hex: &[String]) -> Result<RingSignature, Error>`
+
+Alias for the original `sign` function, provided for clarity. Handles hex conversion internally.
+
+### `verify_with_hex(signature: &RingSignature, message: &[u8], ring_pubkeys_hex: &[String]) -> Result<bool, Error>`
+
+Alias for the original `verify` function, provided for clarity. Handles hex conversion internally.
 
 ### `generate_keypair_hex(format: &str) -> KeyPairHex`
 
@@ -256,12 +316,30 @@ pub struct RingSignature {
 }
 ```
 
+### `RingSignatureBinary` Struct
+
+```rust
+pub struct RingSignatureBinary {
+  pub c0: Scalar, // Initial challenge scalar in binary form
+  pub s: Vec<Scalar>, // Array of response scalars in binary form
+}
+```
+
 ### `KeyPairHex` Struct
 
 ```rust
 pub struct KeyPairHex {
   pub private_key_hex: String, // 64-char hex
   pub public_key_hex: String,  // Hex format depends on generation option
+}
+```
+
+### `KeyPair` Struct
+
+```rust
+pub struct KeyPair {
+  pub private_key: Scalar,
+  pub public_key: ProjectivePoint,
 }
 ```
 
