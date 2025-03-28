@@ -186,6 +186,10 @@ The library includes comprehensive benchmarks using the Criterion framework for 
 cargo bench
 ```
 
+For detailed information on running and interpreting benchmarks, see [BENCHMARKS.md](BENCHMARKS.md).
+
+The repository also includes a GitHub Actions workflow that automatically runs benchmarks on each push and pull request, with the HTML report available as an artifact in the workflow run.
+
 ### Performance Results
 
 Below is a summary of the benchmark results, showing median execution times for each operation with different ring sizes:
