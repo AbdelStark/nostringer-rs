@@ -44,6 +44,8 @@ Nostringer is largely inspired by [Monero's Ring Signatures](https://www.getmone
   - [Key Features](#key-features)
   - [Installation](#installation)
   - [Usage](#usage)
+  - [Examples](#examples)
+  - [Benchmarks](#benchmarks)
   - [API Reference](#api-reference)
     - [`sign(message: &[u8], private_key_hex: &str, ring_pubkeys_hex: &[String]) -> Result<RingSignature, Error>`](#signmessage-u8-private_key_hex-str-ring_pubkeys_hex-string---resultringsignature-error)
     - [`verify(signature: &RingSignature, message: &[u8], ring_pubkeys_hex: &[String]) -> Result<bool, Error>`](#verifysignature-ringsignature-message-u8-ring_pubkeys_hex-string---resultbool-error)
@@ -150,6 +152,44 @@ fn main() -> Result<(), Error> {
     Ok(())
 }
 ```
+
+## Examples
+
+The repository includes several examples that demonstrate different aspects of the library:
+
+1. **Basic Signing** (`examples/basic_signing.rs`): Demonstrates the core signing and verification functionality.
+   ```bash
+   cargo run --example basic_signing
+   ```
+
+2. **Key Formats** (`examples/key_formats.rs`): Shows how to work with different key formats (x-only, compressed, uncompressed) and create larger rings.
+   ```bash
+   cargo run --example key_formats
+   ```
+
+3. **Error Handling** (`examples/error_handling.rs`): Demonstrates proper error handling for common error scenarios.
+   ```bash
+   cargo run --example error_handling
+   ```
+
+These examples provide practical demonstrations of how to use the library in real-world scenarios and handle various edge cases.
+
+## Benchmarks
+
+The library includes comprehensive benchmarks using the Criterion framework:
+
+- Signing with different ring sizes (3, 5, 10, 20 members)
+- Verification with different ring sizes
+- Combined signing and verification
+- Performance with different key formats (x-only, compressed, uncompressed)
+
+To run the benchmarks:
+
+```bash
+cargo bench
+```
+
+This will generate detailed reports showing the performance of each operation across different parameters.
 
 ## API Reference
 
