@@ -5,7 +5,7 @@ fn bench_ring_sign(c: &mut Criterion) {
     let mut group = c.benchmark_group("ring_signature_sign");
 
     // Benchmark signing with different ring sizes
-    for ring_size in [3, 5, 10, 20].iter() {
+    for ring_size in [2, 10, 100].iter() {
         group.bench_with_input(
             BenchmarkId::from_parameter(ring_size),
             ring_size,
@@ -29,7 +29,7 @@ fn bench_ring_verify(c: &mut Criterion) {
     let mut group = c.benchmark_group("ring_signature_verify");
 
     // Benchmark verification with different ring sizes
-    for ring_size in [3, 5, 10, 20].iter() {
+    for ring_size in [2, 10, 100].iter() {
         group.bench_with_input(
             BenchmarkId::from_parameter(ring_size),
             ring_size,
@@ -54,7 +54,7 @@ fn bench_ring_sign_and_verify(c: &mut Criterion) {
     let mut group = c.benchmark_group("ring_signature_sign_and_verify");
 
     // Benchmark combined signing and verification with different ring sizes
-    for ring_size in [3, 5, 10, 20].iter() {
+    for ring_size in [2, 10, 100].iter() {
         group.bench_with_input(
             BenchmarkId::from_parameter(ring_size),
             ring_size,
@@ -77,35 +77,10 @@ fn bench_ring_sign_and_verify(c: &mut Criterion) {
     group.finish();
 }
 
-// Benchmark different key formats
-fn bench_key_formats(c: &mut Criterion) {
-    let mut group = c.benchmark_group("ring_signature_key_formats");
-
-    for format in ["xonly", "compressed", "uncompressed"].iter() {
-        group.bench_with_input(BenchmarkId::from_parameter(format), format, |b, &fmt| {
-            // Setup: Generate keypairs with the specific format
-            let ring_size = 5;
-            let keypairs = generate_keypairs(ring_size, fmt);
-            let ring = get_public_keys(&keypairs);
-            let signer_key = &keypairs[0].private_key_hex;
-            let message = b"Benchmark different key formats";
-
-            // Benchmark both sign and verify with the specific format
-            b.iter(|| {
-                let signature = sign(message, signer_key, &ring).unwrap();
-                verify(&signature, message, &ring).unwrap()
-            });
-        });
-    }
-
-    group.finish();
-}
-
 criterion_group!(
     benches,
     bench_ring_sign,
     bench_ring_verify,
     bench_ring_sign_and_verify,
-    bench_key_formats
 );
 criterion_main!(benches);

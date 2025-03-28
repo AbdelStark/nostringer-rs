@@ -801,7 +801,6 @@ name = "nostringer"
 version = "0.1.0"
 dependencies = [
  "criterion",
- "generic-array",
  "hex",
  "k256",
  "lazy_static",

@@ -46,6 +46,7 @@ Nostringer is largely inspired by [Monero's Ring Signatures](https://www.getmone
   - [Usage](#usage)
   - [Examples](#examples)
   - [Benchmarks](#benchmarks)
+    - [Performance Results](#performance-results)
   - [API Reference](#api-reference)
     - [`sign(message: &[u8], private_key_hex: &str, ring_pubkeys_hex: &[String]) -> Result<RingSignature, Error>`](#signmessage-u8-private_key_hex-str-ring_pubkeys_hex-string---resultringsignature-error)
     - [`verify(signature: &RingSignature, message: &[u8], ring_pubkeys_hex: &[String]) -> Result<bool, Error>`](#verifysignature-ringsignature-message-u8-ring_pubkeys_hex-string---resultbool-error)
@@ -158,16 +159,19 @@ fn main() -> Result<(), Error> {
 The repository includes several examples that demonstrate different aspects of the library:
 
 1. **Basic Signing** (`examples/basic_signing.rs`): Demonstrates the core signing and verification functionality.
+
    ```bash
    cargo run --example basic_signing
    ```
 
 2. **Key Formats** (`examples/key_formats.rs`): Shows how to work with different key formats (x-only, compressed, uncompressed) and create larger rings.
+
    ```bash
    cargo run --example key_formats
    ```
 
 3. **Error Handling** (`examples/error_handling.rs`): Demonstrates proper error handling for common error scenarios.
+
    ```bash
    cargo run --example error_handling
    ```
@@ -198,15 +202,14 @@ Below is a summary of the benchmark results, showing median execution times for 
 | **Sign+Verify** | 10 members  | 1.76 ms        |
 | **Sign+Verify** | 100 members | 25.02 ms       |
 
-These benchmarks demonstrate that the library maintains good performance even with larger ring sizes. Verification is slightly faster than signing, and the combined sign+verify operations scale linearly with ring size.
+Benchmarking Environment:
 
-#### Performance Analysis
-
-- **Small rings (2 members)**: Both sign and verify operations complete in under 205 µs, making them suitable for real-time applications.
-- **Medium rings (10 members)**: Operations still complete in under 1 ms, providing a good balance between anonymity set size and performance.
-- **Large rings (100 members)**: Even with a very large anonymity set of 100 members, operations complete in reasonable time (13-25 ms), allowing for good privacy with acceptable performance.
-
-The library's performance characteristics make it practical for use in Nostr applications where both privacy and efficiency are important.
+- **Model:** MacBook Pro (Identifier: `MacBookPro18,2`)
+- **CPU:** Apple M1 Max
+- **Cores:** 10
+- **RAM:** 64 GB
+- **Architecture:** `arm64`
+- **Operating System:** macOS 14.7 (Build `23H124`)
 
 ## API Reference
 
