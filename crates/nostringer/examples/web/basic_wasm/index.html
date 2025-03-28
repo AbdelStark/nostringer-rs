@@ -75,8 +75,8 @@
     <h1>Nostringer Ring Signatures in WebAssembly</h1>
 
     <div id="tabs">
-      <div class="tab active" onclick="switchTab('sag')">SAG (Unlinkable)</div>
-      <div class="tab" onclick="switchTab('blsag')">BLSAG (Linkable)</div>
+      <div class="tab active" data-tab="sag">SAG (Unlinkable)</div>
+      <div class="tab" data-tab="blsag">BLSAG (Linkable)</div>
     </div>
 
     <div class="container">
@@ -193,6 +193,14 @@ Click "Generate Keys for Ring" to start...</pre
         document
           .getElementById("blsag-check-linkability")
           .addEventListener("click", blsagCheckLinkability);
+
+        // Setup tab switching
+        document.querySelectorAll(".tab").forEach((tab) => {
+          tab.addEventListener("click", () => {
+            const tabName = tab.getAttribute("data-tab");
+            switchTab(tabName);
+          });
+        });
       }
 
       // SAG Functions
@@ -505,9 +513,9 @@ Click "Generate Keys for Ring" to start...</pre
           tab.classList.remove("active");
         });
 
-        // Find the clicked tab button by its onclick attribute
+        // Find the clicked tab button by its data-tab attribute
         document
-          .querySelector(`.tab[onclick="switchTab('${tabName}')"]`)
+          .querySelector(`.tab[data-tab="${tabName}"]`)
           .classList.add("active");
       }
 
