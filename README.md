@@ -7,6 +7,7 @@
 <a href="https://bitcoin.org/"> <img alt="Bitcoin" src="https://img.shields.io/badge/Bitcoin-FF9900?style=for-the-badge&logo=bitcoin&logoColor=white" height=30></a>
 <a href="https://www.getmonero.org/"> <img alt="Monero" src="https://img.shields.io/badge/Monero-000?style=for-the-badge&logo=monero&logoColor=white" height=30></a>
 <a href="https://github.com/nostr-protocol/nostr"> <img alt="Nostr" src="https://img.shields.io/badge/Nostr-8E44AD?style=for-the-badge" height=30></a>
+
 </div>
 
 # Nostringer Ring Signatures (Rust)
@@ -44,6 +45,7 @@ Nostringer is largely inspired by [Monero's Ring Signatures](https://www.getmone
   - [Signature Variants](#signature-variants)
     - [SAG (Spontaneous Anonymous Group)](#sag-spontaneous-anonymous-group)
     - [BLSAG (Back's Linkable Spontaneous Anonymous Group)](#blsag-backs-linkable-spontaneous-anonymous-group)
+  - [SAG vs. bLSAG Trade-offs](#sag-vs-blsag-trade-offs)
   - [Installation](#installation)
   - [Usage](#usage)
     - [Optimized Binary API](#optimized-binary-api)
@@ -97,6 +99,51 @@ A linkable variant that:
 - Similar to the linkable ring signature scheme used in Monero
 
 Choose the variant that best suits your privacy and security requirements.
+
+## SAG vs. bLSAG Trade-offs
+
+This library implements both a basic SAG-like ring signature and the bLSAG (Back's Linkable Spontaneous Anonymous Group) variant. They offer different properties with corresponding performance characteristics:
+
+**Functionality:**
+
+- **SAG (e.g., `sign`, `verify`, `sign_binary`, `verify_binary`):**
+  - Provides **Anonymity**: Hides which ring member produced the signature. The verifier only knows the signature came from _someone_ in the specified ring.
+  - Provides **Unlinkability**: Signatures produced by the same signer (for different messages or using different rings) cannot be cryptographically linked back to that signer or to each other.
+- **bLSAG (e.g., `sign_blsag_binary`, `verify_blsag_binary`):**
+  - Provides **Anonymity**: Same as SAG.
+  - Provides **Linkability**: Introduces a **Key Image** (`I`) which is unique and deterministic for each private key (`I = sk * H_p(PK)`). If the same private key is used to create multiple bLSAG signatures (even with different rings or messages), they will all produce the _same_ key image. This allows detection of multiple signatures from the same (anonymous) source, useful for preventing double-voting or double-spending in anonymous contexts. Signatures from _different_ private keys will produce _different_ key images.
+
+**Signature Size:**
+
+- **SAG Signature (`c0`, `s`):** Contains `n + 1` scalars (where `n` is the ring size).
+  - Binary Size: `32 * (n + 1)` bytes.
+- **bLSAG Signature (`c0`, `s`) + Key Image (`I`):** Contains `n + 1` scalars _plus_ one key image (a curve point).
+  - Binary Size: `[32 * (n + 1)]` bytes (signature) + `33` bytes (compressed key image) = `32n + 65` bytes.
+- **Comparison:** bLSAG signatures require transmitting the additional key image alongside the `c0` and `s` values, making them slightly larger (a constant overhead of 33 bytes compared to SAG when using compressed points).
+
+**Performance (Signing & Verification Speed):**
+
+The computational cost is dominated by elliptic curve scalar multiplications and hashing operations.
+
+- **Elliptic Curve Operations:**
+  - **SAG:** Roughly `2n` point multiplications per sign/verify operation in the main loop (`s*G + c*P`).
+  - **bLSAG:** Roughly `4n` point multiplications per sign/verify operation in the main loop (`s*G + c*P` and `s*Hp(P) + c*I`). It also includes the key image calculation (`sk * Hp(PK)`) during signing and a key image validity check (subgroup check via `is_torsion_free`) during verification.
+- **Hashing:** -**SAG:** Uses one type of hash function (`hash_to_scalar`) involving the message, ring keys (hex strings in current implementation), and one point. This hash is computed `n` times per operation.
+  - **bLSAG:** Requires an additional `hash_to_point` operation (hashing a public key to a point) for each ring member (`n` times per operation). It uses a different challenge hash function (`hash_for_blsag_challenge`) involving the message and two points, also computed `n` times per operation.
+- **Comparison:** bLSAG signing and verification involve approximately twice the number of core point multiplications and additional hashing steps (`hash_to_point`). Therefore, bLSAG operations are expected to be noticeably **slower** than their SAG counterparts. We will provide detailed benchmarks to quantify this difference.
+
+**Summary Table:**
+
+| Feature         | SAG                  | bLSAG                         | Trade-off Summary                     |
+| :-------------- | :------------------- | :---------------------------- | :------------------------------------ |
+| **Linkability** | No (Unlinkable)      | Yes (Via Key Image)           | bLSAG adds same-signer detection.     |
+| **Size**        | `32(n+1)` bytes      | `32n + 65` bytes              | bLSAG is slightly larger (+33 bytes). |
+| **Speed**       | Faster (`~2n` mults) | Slower (`~4n` mults + extras) | bLSAG is computationally heavier.     |
+
+**When to Choose:**
+
+- Choose **SAG** if simple anonymity and unlinkability are sufficient, and maximum performance or minimum signature size are priorities.
+- Choose **bLSAG** if you **need** the ability to detect if the same anonymous signer has signed multiple times (e.g., voting, unique claims), and can accept the slightly larger signature size and increased computation time.
 
 ## Installation
 
