@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.package]
 version = "0.1.4"
 authors = ["AbdelStark <@AbdelStark>"]
-description = "A Rust implementation of the ring signature scheme in the nostringer TypeScript library"
+description = "Ring signatures (SAG, BLSAG) for Nostr"
 repository = "https://github.com/AbdelStark/nostringer-rs"
 homepage = "https://github.com/AbdelStark/nostringer-rs"
 edition = "2021"

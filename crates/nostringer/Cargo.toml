@@ -27,7 +27,7 @@ console_error_panic_hook = { version = "0.1.7", optional = true }
 [dev-dependencies]
 criterion = { version = "0.4", features = ["html_reports"] }
 colored = "2.0"
-wasm-bindgen-test = { version = "0.3", optional = true }
+wasm-bindgen-test = "0.3"
 
 [features]
 default = []
@@ -37,7 +37,6 @@ wasm = [
     "dep:getrandom",
     "dep:js-sys",
     "dep:console_error_panic_hook",
-    "dep:wasm-bindgen-test",
 ]
 
 [lib]
