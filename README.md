@@ -16,8 +16,12 @@
   <img src="https://raw.githubusercontent.com/AbdelStark/nostringer/main/assets/img/nostringer.png" alt="Nostringer Logo" width="250">
 
   <h3>
+   <a href="https://github.com/AbdelStark/nostringer-rs/ROADMAP.md">
+      ROADMAP
+    </a>
+   <span> | </span>
     <a href="https://nostringer.starknetonbitcoin.com/">
-      TS LIVE DEMO
+      LIVE DEMO
     </a>
     <span> | </span>
     <a href="https://docs.rs/nostringer/latest/nostringer/">
@@ -41,6 +45,7 @@ Nostringer is largely inspired by [Monero's Ring Signatures](https://www.getmone
 - [Nostringer Ring Signatures (Rust)](#nostringer-ring-signatures-rust)
   - [Table of Contents](#table-of-contents)
   - [Problem Statement](#problem-statement)
+  - [Roadmap](#roadmap)
   - [Key Features](#key-features)
   - [Signature Variants](#signature-variants)
     - [SAG (Spontaneous Anonymous Group)](#sag-spontaneous-anonymous-group)
@@ -50,6 +55,7 @@ Nostringer is largely inspired by [Monero's Ring Signatures](https://www.getmone
   - [Usage](#usage)
     - [Optimized Binary API](#optimized-binary-api)
     - [WebAssembly Usage](#webassembly-usage)
+      - [Building for WASM](#building-for-wasm)
   - [Examples](#examples)
   - [Benchmarks](#benchmarks)
     - [Performance Results](#performance-results)
@@ -65,6 +71,10 @@ Nostringer is largely inspired by [Monero's Ring Signatures](https://www.getmone
 In many scenarios, you want to prove that "someone among these N credentials produced this signature," but you do **not** want to reveal _which_ credential or identity. For instance, you might have a set of recognized Nostr pubkeys (e.g., moderators, DAO members, authorized reviewers) who are allowed to perform certain actions, but you want them to remain anonymous within that set when doing so.
 
 A **ring signature** solves this by letting an individual sign a message _on behalf of the group_ (the ring). A verifier can confirm the message originated from **one** of the public keys in the ring, without learning the specific signer's identity.
+
+## Roadmap
+
+Check [ROADMAP.md](ROADMAP.md) for the detailed project roadmap, including completed and upcoming milestones.
 
 ## Key Features
 
@@ -259,28 +269,30 @@ import init, {
   wasm_verify,
   wasm_sign_blsag,
   wasm_verify_blsag,
-  wasm_key_images_match
-} from './nostringer.js';
+  wasm_key_images_match,
+} from "./nostringer.js";
 
 // Initialize the WASM module
 async function main() {
   await init();
-  
+
   // Generate keypairs for the ring
   const keypair1 = wasm_generate_keypair("xonly");
   const keypair2 = wasm_generate_keypair("xonly");
   const keypair3 = wasm_generate_keypair("xonly");
-  
+
   const ringPubkeys = [
     keypair1.public_key_hex(),
     keypair2.public_key_hex(),
-    keypair3.public_key_hex()
+    keypair3.public_key_hex(),
   ];
-  
+
   // Sign a message with one of the keys
-  const message = new TextEncoder().encode("This is a secret message to the group.");
+  const message = new TextEncoder().encode(
+    "This is a secret message to the group.",
+  );
   const signature = wasm_sign(message, keypair2.private_key_hex(), ringPubkeys);
-  
+
   // Verify the signature
   const isValid = wasm_verify(signature, message, ringPubkeys);
   console.log("Signature valid:", isValid);
@@ -342,7 +354,7 @@ The repository includes several examples that demonstrate different aspects of t
    ```bash
    # Build the WASM module
    wasm-pack build crates/nostringer --target web --out-dir examples/web/basic_wasm/pkg --features wasm
-   
+
    # Serve the example (using Python's built-in server)
    cd crates/nostringer/examples/web/basic_wasm
    python -m http.server
