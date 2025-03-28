@@ -1,421 +1,398 @@
-use hashes::{Hash, sha256};
-use rand_core::{OsRng, RngCore};
-use secp256k1::{Message, PublicKey, Secp256k1, SecretKey, ecdsa};
-use std::fmt;
+//! # Nostringer Ring Signatures (Rust)
+//!
+//! A Rust implementation of the ring signature scheme in the
+//! [nostringer](https://github.com/AbdelStark/nostringer) TypeScript library.
+//!
+//! This library provides functions to sign and verify messages using a
+//! Spontaneous Anonymous Group (SAG)-like ring signature scheme over the
+//! secp256k1 curve. It aims for compatibility with the original TS implementation.
+//!
+//! ## Usage
+//!
+//! ```rust
+//! use nostringer::{sign, verify, generate_keypair_hex, RingSignature};
+//! use k256::SecretKey;
+//! use std::collections::HashMap; // Example, not needed for basic usage
+//!
+//! fn main() -> Result<(), nostringer::Error> {
+//!     // 1. Setup: Generate keys for the ring members
+//!     let keypair1 = generate_keypair_hex("xonly"); // Use "xonly", "compressed", or "uncompressed"
+//!     let keypair2 = generate_keypair_hex("xonly");
+//!     let keypair3 = generate_keypair_hex("xonly");
+//!
+//!     let ring_pubkeys_hex = vec![
+//!         keypair1.public_key_hex.clone(),
+//!         keypair2.public_key_hex.clone(),
+//!         keypair3.public_key_hex.clone(),
+//!     ];
+//!
+//!     // 2. Define the message to be signed
+//!     let message = b"This is a secret message to the group.";
+//!
+//!     // 3. Signer (keypair2) signs the message
+//!     let signature = sign(
+//!         message,
+//!         &keypair2.private_key_hex,
+//!         &ring_pubkeys_hex,
+//!     )?;
+//!
+//!     println!("Generated Signature:");
+//!     println!(" c0: {}", signature.c0);
+//!     println!(" s: {:?}", signature.s);
+//!
+//!     // 4. Verification: Anyone can verify the signature against the ring
+//!     let is_valid = verify(
+//!         &signature,
+//!         message,
+//!         &ring_pubkeys_hex,
+//!     )?;
+//!
+//!     println!("Signature valid: {}", is_valid);
+//!     assert!(is_valid);
+//!
+//!     // 5. Tamper test: Verification should fail if the message changes
+//!     let tampered_message = b"This is a different message.";
+//!     let is_tampered_valid = verify(
+//!         &signature,
+//!         tampered_message,
+//!         &ring_pubkeys_hex,
+//!     )?;
+//!     println!("Tampered signature valid: {}", is_tampered_valid);
+//!     assert!(!is_tampered_valid);
+//!
+//!     Ok(())
+//! }
+//! ```
 
-/// A ring signature consists of an initial challenge and a list of response scalars.
-#[derive(Clone)]
-pub struct RingSignature {
-    pub c0: [u8; 32],
-    pub s: Vec<[u8; 32]>,
-}
+use k256::elliptic_curve::{
+    PrimeField,
+    ops::Reduce,
+    point::AffineCoordinates,
+    rand_core::{self},
+    sec1::ToEncodedPoint,
+};
+use k256::{NonZeroScalar, ProjectivePoint, PublicKey, Scalar, SecretKey, U256};
+use rand::rngs::OsRng;
+use sha2::{Digest, Sha256};
+use subtle::{ConditionallySelectable, ConstantTimeEq};
+use thiserror::Error;
 
-/// Error type for signature operations
-#[derive(Debug)]
+// Optional: Add serde imports gated by feature
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
+// --- Constants ---
+const GENERATOR: ProjectivePoint = ProjectivePoint::GENERATOR;
+
+// --- Error Type ---
+#[derive(Error, Debug)]
 pub enum Error {
-    /// Secp256k1 error
-    Secp256k1(secp256k1::Error),
-    /// Invalid public key
-    InvalidPublicKey(String),
-    /// Ring too small
-    RingTooSmall,
-    /// Signer's public key not found in the ring
-    SignerKeyNotFound,
-    /// Signing error
-    SigningError(String),
+    #[error("Hex decoding failed: {0}")]
+    HexDecode(#[from] hex::FromHexError),
+    #[error("Invalid private key format: {0}")]
+    PrivateKeyFormat(String),
+    #[error("Invalid public key format: {0}")]
+    PublicKeyFormat(String),
+    #[error("Invalid scalar encoding (>= curve order N)")]
+    InvalidScalarEncoding,
+    #[error("Secp256k1 curve error: {0}")]
+    Secp256k1(#[from] k256::elliptic_curve::Error),
+    #[error("Ring must have at least 2 members, got {0}")]
+    RingTooSmall(usize),
+    #[error("Signer's public key (or its negation) not found in the ring")]
+    SignerNotInRing,
+    #[error("Signature verification failed (internal calculation mismatch)")]
+    VerificationFailed,
+    #[error("Invalid signature format (e.g., incorrect number of 's' values)")]
+    InvalidSignatureFormat,
+    #[error("Hashing error: {0}")]
+    HashingError(String),
 }
 
-impl From<secp256k1::Error> for Error {
-    fn from(e: secp256k1::Error) -> Self {
-        Self::Secp256k1(e)
-    }
+// --- Structs ---
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct RingSignature {
+    pub c0: String,
+    pub s: Vec<String>,
 }
 
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::Secp256k1(e) => write!(f, "Secp256k1 error: {}", e),
-            Self::InvalidPublicKey(msg) => write!(f, "Invalid public key: {}", msg),
-            Self::RingTooSmall => write!(f, "Ring too small, must have at least 2 members"),
-            Self::SignerKeyNotFound => write!(f, "Signer's public key not found in the ring"),
-            Self::SigningError(msg) => write!(f, "Signing error: {}", msg),
-        }
-    }
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize))]
+pub struct KeyPairHex {
+    pub private_key_hex: String,
+    pub public_key_hex: String,
 }
 
-impl std::error::Error for Error {}
+// --- Core Functions ---
 
-impl RingSignature {
-    /// Verifies a ring signature.
-    pub fn verify(&self, message: &[u8], public_keys: &[PublicKey]) -> Result<bool, Error> {
-        // Basic validation
-        if public_keys.len() < 2 {
-            return Err(Error::RingTooSmall);
-        }
-
-        if public_keys.len() != self.s.len() {
-            return Err(Error::SigningError(
-                "Signature response count doesn't match ring size".into(),
-            ));
-        }
-
-        let secp = Secp256k1::new();
-        let mut c = self.c0;
-        let ring_size = public_keys.len();
-
-        for i in 0..ring_size {
-            let pk_i = public_keys[i];
-            let s_i = self.s[i];
-
-            // Convert s_i to SecretKey (it's a scalar value represented as bytes)
-            let s_key = SecretKey::from_slice(&s_i)?;
-
-            // Create point s_i*G
-            let s_g = PublicKey::from_secret_key(&secp, &s_key);
-
-            // Create temporary key from challenge value c_i
-            let c_key = SecretKey::from_slice(&c)?;
-
-            // Create point c_i*P_i using tweaking
-            let c_pk = pk_i.mul_tweak(&secp, &c_key.into())?;
-
-            // Add the points
-            let point = s_g.combine(&c_pk)?;
-
-            // Update challenge for next iteration
-            let hash_bytes = sha256::Hash::hash(message).to_byte_array();
-            let point_bytes = point.serialize();
-
-            // Combine bytes for the next hash
-            let mut combined = Vec::with_capacity(hash_bytes.len() + point_bytes.len());
-            combined.extend_from_slice(&hash_bytes);
-            combined.extend_from_slice(&point_bytes);
-
-            c = hash_to_scalar(&combined);
-        }
-
-        // Ring verification succeeds if we end up with the initial challenge
-        Ok(c == self.c0)
-    }
-}
-
-/// Signs a message using a SAG ring signature approach.
-pub fn ring_sign(
+pub fn sign(
     message: &[u8],
-    secret_key: &SecretKey,
-    public_keys: &[PublicKey],
+    private_key_hex: &str,
+    ring_pubkeys_hex: &[String],
 ) -> Result<RingSignature, Error> {
-    if public_keys.len() < 2 {
-        return Err(Error::RingTooSmall);
+    let ring_size = ring_pubkeys_hex.len();
+    if ring_size < 2 {
+        return Err(Error::RingTooSmall(ring_size));
     }
 
-    let secp = Secp256k1::new();
+    let d = hex_to_scalar(private_key_hex)?;
+    if d == Scalar::ZERO {
+        return Err(Error::PrivateKeyFormat(
+            "Private key scalar cannot be zero".into(),
+        ));
+    }
+    let _d_nonzero =
+        NonZeroScalar::new(d).expect("d was checked non-zero, NonZeroScalar::new must succeed");
 
-    // Find our public key in the ring
-    let my_public_key = PublicKey::from_secret_key(&secp, secret_key);
-    let my_index = public_keys
+    // FIX: Use closure in map
+    let ring_points: Vec<ProjectivePoint> = ring_pubkeys_hex
         .iter()
-        .position(|pk| pk == &my_public_key)
-        .ok_or(Error::SignerKeyNotFound)?;
+        .map(|pubkey_str| hex_to_point(pubkey_str)) // Closure fixes type mismatch
+        .collect::<Result<_, _>>()?;
 
-    // Prepare the arrays for challenges and responses
-    let ring_size = public_keys.len();
-    let mut c: Vec<[u8; 32]> = vec![[0u8; 32]; ring_size];
-    let mut s: Vec<[u8; 32]> = vec![[0u8; 32]; ring_size];
+    let my_point = GENERATOR * d;
+    let flipped_d = d.negate();
+    let flipped_point = GENERATOR * flipped_d;
 
-    // Generate random alpha scalar for the signer
-    let alpha = random_secret_key()?;
-
-    // Compute alpha*G (the initial commitment)
-    let alpha_g = PublicKey::from_secret_key(&secp, &alpha);
-
-    // Calculate the initial challenge for the ring
-    let hash_bytes = sha256::Hash::hash(message).to_byte_array();
-    let point_bytes = alpha_g.serialize();
-
-    // Combine bytes for the initial challenge
-    let mut combined = Vec::with_capacity(hash_bytes.len() + point_bytes.len());
-    combined.extend_from_slice(&hash_bytes);
-    combined.extend_from_slice(&point_bytes);
-
-    // Start the ring at (my_index + 1) % ring_size
-    let start_index = (my_index + 1) % ring_size;
-    c[start_index] = hash_to_scalar(&combined);
-
-    // Generate random scalars for s_i, where i != my_index
-    let mut i = start_index;
-    while i != my_index {
-        // Generate random s_i value
-        let s_i = random_secret_key()?;
-        s[i] = *s_i.as_ref();
-
-        // R_i = s_i*G + c_i*P_i
-        let s_g = PublicKey::from_secret_key(&secp, &s_i);
-
-        // Create temporary key from challenge value c_i
-        let c_key = SecretKey::from_slice(&c[i])?;
-
-        // c_i*P_i using tweaking
-        let c_pk = public_keys[i].mul_tweak(&secp, &c_key.into())?;
-
-        // Combine to get R_i
-        let point = s_g.combine(&c_pk)?;
-
-        // Calculate the next challenge
-        let hash_bytes = sha256::Hash::hash(message).to_byte_array();
-        let point_bytes = point.serialize();
-
-        // Combine bytes for the next challenge
-        let mut combined = Vec::with_capacity(hash_bytes.len() + point_bytes.len());
-        combined.extend_from_slice(&hash_bytes);
-        combined.extend_from_slice(&point_bytes);
-
-        let next_index = (i + 1) % ring_size;
-        c[next_index] = hash_to_scalar(&combined);
-
-        i = next_index;
-    }
-
-    // Calculate the signer's response
-    // s[my_index] = alpha - c[my_index] * secret_key
-
-    // Convert c[my_index] to a SecretKey
-    let c_my = SecretKey::from_slice(&c[my_index])?;
-
-    // Calculate c_my * secret_key using tweaking
-    let tweak_result = secret_key.mul_tweak(&c_my.into())?;
-
-    // Create negate(tweak_result) by using the modular negation
-    // We'll use an approximation since the secp256k1 lib doesn't provide direct negation
-    let mut negated_tweak = *tweak_result.as_ref();
-
-    // Using XOR to flip all bits (approximation of negation for our purposes)
-    for i in 0..32 {
-        negated_tweak[i] ^= 0xFF;
-    }
-
-    // Convert the negated bytes back to a SecretKey
-    let negated_key = SecretKey::from_slice(&negated_tweak)?;
-
-    // Add alpha + negated_key (effectively alpha - tweak_result)
-    let s_my = alpha.add_tweak(&negated_key.into())?;
-
-    s[my_index] = *s_my.as_ref();
-
-    Ok(RingSignature { c0: c[0], s })
-}
-
-/// Helper function to generate a random secret key
-fn random_secret_key() -> Result<SecretKey, Error> {
-    let mut rng = OsRng;
-    let mut bytes = [0u8; 32];
-
-    loop {
-        rng.fill_bytes(&mut bytes);
-        if let Ok(key) = SecretKey::from_slice(&bytes) {
-            return Ok(key);
+    let mut signer_index: Option<usize> = None;
+    let mut used_d = d;
+    for (i, p) in ring_points.iter().enumerate() {
+        if p == &my_point {
+            signer_index = Some(i);
+            used_d = d;
+            break;
+        }
+        if p == &flipped_point {
+            signer_index = Some(i);
+            used_d = flipped_d;
+            break;
         }
     }
+    let signer_index = signer_index.ok_or(Error::SignerNotInRing)?;
+
+    let mut r_scalars = vec![Scalar::ZERO; ring_size];
+    let mut c_scalars = vec![Scalar::ZERO; ring_size];
+    let os_rng = OsRng;
+
+    let alpha_nonzero = random_non_zero_scalar(os_rng);
+    let alpha = *alpha_nonzero.as_ref();
+    let alpha_g = GENERATOR * alpha;
+
+    let start_index = (signer_index + 1) % ring_size;
+    c_scalars[start_index] = hash_to_scalar(message, ring_pubkeys_hex, &alpha_g)?;
+
+    let mut current_index = start_index;
+    while current_index != signer_index {
+        let r_nonzero = random_non_zero_scalar(os_rng);
+        r_scalars[current_index] = *r_nonzero.as_ref();
+        let xi = (GENERATOR * r_scalars[current_index])
+            + (ring_points[current_index] * c_scalars[current_index]);
+        let next_index = (current_index + 1) % ring_size;
+        c_scalars[next_index] = hash_to_scalar(message, ring_pubkeys_hex, &xi)?;
+        current_index = next_index;
+    }
+
+    r_scalars[signer_index] = alpha - (c_scalars[signer_index] * used_d);
+
+    Ok(RingSignature {
+        c0: scalar_to_hex(&c_scalars[0]),
+        s: r_scalars.iter().map(scalar_to_hex).collect(),
+    })
 }
 
-/// Helper function: Hash bytes to a scalar (32-byte array)
-fn hash_to_scalar(bytes: &[u8]) -> [u8; 32] {
-    let hash = sha256::Hash::hash(bytes);
-    let mut result = [0u8; 32];
-    result.copy_from_slice(hash.as_ref());
-    result
+pub fn verify(
+    signature: &RingSignature,
+    message: &[u8],
+    ring_pubkeys_hex: &[String],
+) -> Result<bool, Error> {
+    let ring_size = ring_pubkeys_hex.len();
+    if ring_size == 0 {
+        return Ok(false);
+    }
+    if signature.s.len() != ring_size {
+        return Err(Error::InvalidSignatureFormat);
+    }
+
+    let c0_scalar = hex_to_scalar(&signature.c0)?;
+
+    let r_scalars: Vec<Scalar> = signature
+        .s
+        .iter()
+        .map(|s_hex| hex_to_scalar(s_hex)) // Closure fixes type mismatch
+        .collect::<Result<_, _>>()?;
+
+    let ring_points: Vec<ProjectivePoint> = ring_pubkeys_hex
+        .iter()
+        .map(|pubkey_str| hex_to_point(pubkey_str)) // Closure fixes type mismatch
+        .collect::<Result<_, _>>()?;
+
+    let mut current_c = c0_scalar;
+    for i in 0..ring_size {
+        let xi = (GENERATOR * r_scalars[i]) + (ring_points[i] * current_c);
+        current_c = hash_to_scalar(message, ring_pubkeys_hex, &xi)?;
+    }
+
+    let is_valid = current_c.ct_eq(&c0_scalar);
+    Ok(is_valid.into())
 }
 
-/// Verifies a standard ECDSA signature
-pub fn verify(msg: &[u8], sig: [u8; 64], pubkey: [u8; 33]) -> Result<bool, secp256k1::Error> {
-    let secp = Secp256k1::new();
-    let msg = sha256::Hash::hash(msg);
-    let msg = Message::from_digest_slice(msg.as_ref())?;
-    let sig = ecdsa::Signature::from_compact(&sig)?;
-    let pubkey = PublicKey::from_slice(&pubkey)?;
+// --- Helper Functions ---
 
-    match secp.verify_ecdsa(&msg, &sig, &pubkey) {
-        Ok(_) => Ok(true),
-        Err(_) => Ok(false),
+fn normalize_hex(hex_str: &str) -> Result<String, Error> {
+    let lower = hex_str
+        .trim_start_matches("0x")
+        .trim_start_matches("0X")
+        .to_lowercase();
+    if lower.chars().any(|c| !c.is_ascii_hexdigit()) {
+        return Err(Error::PublicKeyFormat(format!(
+            "Non-hex characters found: {}",
+            hex_str
+        )));
+    }
+    Ok(lower)
+}
+
+fn scalar_to_hex(scalar: &Scalar) -> String {
+    // Scalar::to_bytes returns FieldBytes, which can be converted to slice
+    hex::encode(scalar.to_bytes().as_slice())
+}
+
+fn hex_to_scalar(hex_str: &str) -> Result<Scalar, Error> {
+    let padded_hex = if hex_str.len() < 64 {
+        format!("{:0>64}", hex_str)
+    } else {
+        hex_str.to_string()
+    };
+    if padded_hex.len() != 64 {
+        return Err(Error::PrivateKeyFormat(format!(
+            "Hex len {} != 64",
+            padded_hex.len()
+        )));
+    }
+
+    let bytes = hex::decode(&padded_hex)?;
+    let field_bytes = k256::FieldBytes::from_slice(&bytes);
+
+    let maybe_scalar = Scalar::from_repr(*field_bytes); // Deref FieldBytes to GenericArray
+
+    if maybe_scalar.is_some().into() {
+        Ok(maybe_scalar.unwrap())
+    } else {
+        Err(Error::InvalidScalarEncoding)
     }
 }
 
-/// Signs a message with standard ECDSA signature
-pub fn sign(msg: &[u8], seckey: [u8; 32]) -> Result<ecdsa::Signature, secp256k1::Error> {
-    let secp = Secp256k1::new();
-    let msg = sha256::Hash::hash(msg);
-    let msg = Message::from_digest_slice(msg.as_ref())?;
-    let seckey = SecretKey::from_slice(&seckey)?;
-
-    Ok(secp.sign_ecdsa(&msg, &seckey))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use secp256k1::rand::{RngCore, rngs::OsRng as SecpOsRng};
-
-    #[test]
-    fn test_basic_sign_and_verify() {
-        let seckey = [
-            59, 148, 11, 85, 134, 130, 61, 253, 2, 174, 59, 70, 27, 180, 51, 107, 94, 203, 174,
-            253, 102, 39, 170, 146, 46, 252, 4, 143, 236, 12, 136, 28,
-        ];
-        let pubkey = [
-            2, 29, 21, 35, 7, 198, 183, 43, 14, 208, 65, 139, 14, 112, 205, 128, 231, 245, 41, 91,
-            141, 134, 245, 114, 45, 63, 82, 19, 251, 210, 57, 79, 54,
-        ];
-        let msg = b"This is some message";
-
-        let signature = sign(msg, seckey).unwrap();
-        let serialize_sig = signature.serialize_compact();
-
-        assert!(verify(msg, serialize_sig, pubkey).unwrap());
-    }
-
-    #[test]
-    fn test_invalid_signature() {
-        let seckey = [
-            59, 148, 11, 85, 134, 130, 61, 253, 2, 174, 59, 70, 27, 180, 51, 107, 94, 203, 174,
-            253, 102, 39, 170, 146, 46, 252, 4, 143, 236, 12, 136, 28,
-        ];
-        let pubkey = [
-            2, 29, 21, 35, 7, 198, 183, 43, 14, 208, 65, 139, 14, 112, 205, 128, 231, 245, 41, 91,
-            141, 134, 245, 114, 45, 63, 82, 19, 251, 210, 57, 79, 54,
-        ];
-
-        // Sign a message
-        let msg = b"Original message";
-        let signature = sign(msg, seckey).unwrap();
-        let serialize_sig = signature.serialize_compact();
-
-        // Verify with a different message
-        let wrong_msg = b"Different message";
-        assert!(!verify(wrong_msg, serialize_sig, pubkey).unwrap());
-
-        // Tamper with the signature
-        let mut tampered_sig = serialize_sig;
-        tampered_sig[0] ^= 0x01; // Flip one bit
-
-        // Verify the tampered signature
-        assert!(!verify(msg, tampered_sig, pubkey).unwrap());
-    }
-
-    #[test]
-    fn test_different_message_lengths() {
-        let secp = Secp256k1::new();
-        let mut rng = SecpOsRng;
-
-        // Generate a key pair
-        let mut key_bytes = [0u8; 32];
-        rng.fill_bytes(&mut key_bytes);
-        let secret_key = SecretKey::from_slice(&key_bytes).unwrap();
-        let public_key = PublicKey::from_secret_key(&secp, &secret_key);
-        let pubkey_bytes = public_key.serialize();
-
-        // Test with messages of different lengths
-        let messages = [
-            b"a".to_vec(),
-            b"medium length message".to_vec(),
-            vec![0u8; 1000],  // 1KB message
-            vec![0u8; 10000], // 10KB message
-        ];
-
-        for msg in &messages {
-            let signature = sign(&msg, key_bytes).unwrap();
-            let sig_bytes = signature.serialize_compact();
-
-            assert!(verify(&msg, sig_bytes, pubkey_bytes).unwrap());
-        }
-    }
-
-    #[test]
-    fn test_ring_signature() {
-        let secp = Secp256k1::new();
-        let mut rng = SecpOsRng;
-
-        // Generate keys for a 3-member ring
-        let mut secret_keys = Vec::with_capacity(3);
-        let mut public_keys = Vec::with_capacity(3);
-
-        for _ in 0..3 {
-            let mut key_bytes = [0u8; 32];
-            rng.fill_bytes(&mut key_bytes);
-
-            let secret_key = SecretKey::from_slice(&key_bytes).unwrap();
-            let public_key = PublicKey::from_secret_key(&secp, &secret_key);
-
-            secret_keys.push(secret_key);
-            public_keys.push(public_key);
-        }
-
-        // Sign message with the first key
-        let message = b"Test ring signature message";
-
-        // Just verify that we can sign without errors
-        let ring_signature = ring_sign(message, &secret_keys[0], &public_keys).unwrap();
-
-        // Verify that the signature has the correct structure
-        assert_eq!(ring_signature.s.len(), public_keys.len());
-    }
-
-    #[test]
-    fn test_ring_sig_different_sizes() {
-        let secp = Secp256k1::new();
-        let mut rng = SecpOsRng;
-        let message = b"Test message for different ring sizes";
-
-        // Test with different ring sizes
-        for size in &[2, 3, 5, 10] {
-            // Generate keys for the ring
-            let mut secret_keys = Vec::with_capacity(*size);
-            let mut public_keys = Vec::with_capacity(*size);
-
-            for _ in 0..*size {
-                let mut key_bytes = [0u8; 32];
-                rng.fill_bytes(&mut key_bytes);
-
-                let secret_key = SecretKey::from_slice(&key_bytes).unwrap();
-                let public_key = PublicKey::from_secret_key(&secp, &secret_key);
-
-                secret_keys.push(secret_key);
-                public_keys.push(public_key);
+fn hex_to_point(pubkey_hex: &str) -> Result<ProjectivePoint, Error> {
+    let hex_norm = normalize_hex(pubkey_hex)?;
+    let point_bytes = match hex_norm.len() {
+        64 => hex::decode(format!("02{}", hex_norm))?,
+        66 => {
+            if !hex_norm.starts_with("02") && !hex_norm.starts_with("03") {
+                return Err(Error::PublicKeyFormat(format!(
+                    "Invalid prefix: {}",
+                    &hex_norm[..2]
+                )));
             }
-
-            // Sign with each key in the ring
-            for i in 0..*size {
-                let ring_signature = ring_sign(message, &secret_keys[i], &public_keys).unwrap();
-
-                // Verify signature structure
-                assert_eq!(ring_signature.s.len(), *size);
-            }
+            hex::decode(&hex_norm)?
         }
+        130 => {
+            if !hex_norm.starts_with("04") {
+                return Err(Error::PublicKeyFormat(format!(
+                    "Invalid prefix: {}",
+                    &hex_norm[..2]
+                )));
+            }
+            hex::decode(&hex_norm)?
+        }
+        _ => {
+            return Err(Error::PublicKeyFormat(format!(
+                "Invalid length: {}",
+                hex_norm.len()
+            )));
+        }
+    };
+
+    let public_key = PublicKey::from_sec1_bytes(&point_bytes)
+        .map_err(|e| Error::PublicKeyFormat(format!("SEC1 parse error: {}", e)))?;
+
+    Ok(public_key.to_projective())
+}
+
+fn random_non_zero_scalar(
+    mut rng: impl rand_core::RngCore + rand_core::CryptoRng,
+) -> NonZeroScalar {
+    NonZeroScalar::random(&mut rng)
+}
+
+fn hash_to_scalar(
+    message: &[u8],
+    ring_pubkeys_hex: &[String],
+    ephemeral_point: &ProjectivePoint,
+) -> Result<Scalar, Error> {
+    let mut hasher = Sha256::new();
+    hasher.update(message);
+    for pk_hex in ring_pubkeys_hex {
+        let norm_hex = normalize_hex(pk_hex)?;
+        let pk_bytes = hex::decode(&norm_hex)?;
+        hasher.update(&pk_bytes);
     }
+    let ephemeral_compressed = ephemeral_point.to_encoded_point(true); // Uses ToEncodedPoint trait
+    hasher.update(ephemeral_compressed.as_bytes());
+    let hash_result = hasher.finalize();
 
-    #[test]
-    fn test_ring_signature_error_cases() {
-        let secp = Secp256k1::new();
-        let mut rng = SecpOsRng;
+    let hash_uint = U256::from_be_slice(&hash_result);
+    let scalar = Scalar::reduce(hash_uint);
 
-        // Generate a single key
-        let mut key_bytes = [0u8; 32];
-        rng.fill_bytes(&mut key_bytes);
-        let secret_key = SecretKey::from_slice(&key_bytes).unwrap();
-        let public_key = PublicKey::from_secret_key(&secp, &secret_key);
+    let is_zero = scalar.ct_eq(&Scalar::ZERO);
+    Ok(Scalar::conditional_select(&scalar, &Scalar::ONE, is_zero))
+}
 
-        // Test ring too small
-        let small_ring = vec![public_key];
-        let result = ring_sign(b"Test", &secret_key, &small_ring);
-        assert!(matches!(result, Err(Error::RingTooSmall)));
+pub fn generate_keypair_hex(format: &str) -> KeyPairHex {
+    let os_rng = OsRng;
+    let secret_scalar_nonzero = random_non_zero_scalar(os_rng);
+    let secret_key = SecretKey::from(secret_scalar_nonzero); // Use from NonZeroScalar
+    let secret_scalar = *secret_scalar_nonzero.as_ref();
+    let private_key_hex = scalar_to_hex(&secret_scalar);
 
-        // Test signer key not in ring
-        let mut other_key_bytes = [0u8; 32];
-        rng.fill_bytes(&mut other_key_bytes);
-        let other_secret_key = SecretKey::from_slice(&other_key_bytes).unwrap();
-        let other_public_key = PublicKey::from_secret_key(&secp, &other_secret_key);
+    let public_key = secret_key.public_key();
+    let mut point = public_key.to_projective();
 
-        let different_ring = vec![other_public_key, other_public_key]; // Ring without signer's key
-        let result = ring_sign(b"Test", &secret_key, &different_ring);
-        assert!(matches!(result, Err(Error::SignerKeyNotFound)));
+    let public_key_hex = match format {
+        "xonly" => {
+            // Requires AffineCoordinates trait in scope
+            let affine = point.to_affine();
+            let y_is_odd = affine.y_is_odd(); // Use trait method
+
+            if y_is_odd.into() {
+                let flipped_scalar = secret_scalar.negate();
+                point = GENERATOR * flipped_scalar;
+            }
+            let final_affine = point.to_affine();
+            hex::encode(final_affine.x().as_slice()) // Use trait method .x() -> FieldBytes -> slice
+        }
+        // These use ToEncodedPoint trait
+        "uncompressed" => hex::encode(point.to_encoded_point(false).as_bytes()),
+        "compressed" => hex::encode(point.to_encoded_point(true).as_bytes()),
+        // Default to compressed
+        _ => hex::encode(point.to_encoded_point(true).as_bytes()),
+    };
+
+    KeyPairHex {
+        private_key_hex,
+        public_key_hex,
     }
+}
+
+// Helper to generate multiple keys easily
+pub fn generate_keypairs(count: usize, format: &str) -> Vec<KeyPairHex> {
+    (0..count).map(|_| generate_keypair_hex(format)).collect()
+}
+
+// Helper to extract public keys
+pub fn get_public_keys(keypairs: &[KeyPairHex]) -> Vec<String> {
+    keypairs
+        .iter()
+        .map(|kp| kp.public_key_hex.clone())
+        .collect()
 }

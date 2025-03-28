@@ -1,146 +1,252 @@
-# nostringer-rs
-
 <div align="center">
 
-![Build Status](https://img.shields.io/github/actions/workflow/status/abdelstark/nostringer-rs/rust.yml?branch=main)
-![Crates.io](https://img.shields.io/crates/v/nostringer-rs)
-![License](https://img.shields.io/crates/l/nostringer-rs)
-![Rust Version](https://img.shields.io/badge/rust-stable-orange)
-
-**A Rust library for creating and verifying ring signatures using the secp256k1 cryptographic curve**
+<a href="https://github.com/AbdelStark/nostringer-rs/actions/workflows/rust.yml"><img alt="GitHub Workflow Status" src="https://img.shields.io/github/actions/workflow/status/AbdelStark/nostringer-rs/rust.yml?style=for-the-badge&label=CI" height=30></a>
+<a href="https://crates.io/crates/nostringer"><img alt="Crates.io" src="https://img.shields.io/crates/v/nostringer.svg?style=for-the-badge&label=crates.io" height=30></a>
+<a href="https://docs.rs/nostringer"><img alt="Docs.rs" src="https://docs.rs/nostringer/badge.svg?style=for-the-badge&label=docs.rs" height=30></a>
+<a href="https://github.com/AbdelStark/nostringer-rs/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge" height=30></a>
+<a href="https://github.com/nostr-protocol/nostr"> <img alt="Nostr" src="https://img.shields.io/badge/Nostr-8E44AD?style=for-the-badge" height=30></a>
+<img alt="Rust Version" src="https://img.shields.io/badge/rust-stable-orange.svg?style=for-the-badge&logo=rust" height=30>
 
 </div>
 
-## Overview
+# Nostringer Ring Signatures (Rust)
 
-`nostringer-rs` is a Rust implementation of ring signatures for the secp256k1 curve. It allows members of a group to create signatures that:
+<div align="center">
+  <img src="https://raw.githubusercontent.com/AbdelStark/nostringer/main/assets/img/nostringer.png" alt="Nostringer Logo" width="250">
 
-- Can be verified against a set of public keys
-- Do not reveal which specific key was used to create the signature
-- Guarantee that only a member of the group could have created the signature
+  <h3>
+    <a href="https://nostringer.starknetonbitcoin.com/">
+      TS LIVE DEMO
+    </a>
+    <span> | </span>
+    <a href="https://github.com/AbdelStark/nostringer-rs">
+      RUST REPO
+    </a>
+    <span> | </span>
+    <a href="https://github.com/AbdelStark/nostringer-rs/tree/main/examples">
+      EXAMPLES
+    </a>
+  </h3>
+</div>
 
-This library is built on top of the `secp256k1` and `hashes` crates, providing a simple API for creating and verifying both ring signatures and standard ECDSA signatures.
+A **blazing fast** Rust implementation of the **unlinkable ring signature** scheme in the [nostringer](https://github.com/AbdelStark/nostringer) TypeScript library.
 
-## Features
+Built using pure Rust crypto crates, this library allows a signer to prove membership in a group of Nostr accounts (defined by their public keys) without revealing which specific account produced the signature. It uses a Spontaneous Anonymous Group (SAG)-like algorithm compatible with secp256k1 keys used in Nostr.
 
-- **SAG Ring Signatures**: Create and verify Spontaneous Anonymous Group (SAG) ring signatures
-- **ECDSA Signatures**: Standard ECDSA signature creation and verification
-- **Secure by default**: Built on the widely-used and audited secp256k1 implementation
-- **Simple API**: Easy-to-use functions for all cryptographic operations
+Nostringer is largely inspired by [Monero's Ring Signatures](https://www.getmonero.org/library/Zero-to-Monero-2-0-0.pdf) using Spontaneous Anonymous Group signatures (SAG), and [beritani/ring-signatures](https://github.com/beritani/ring-signatures) implementation of ring signatures using the elliptic curve Ed25519 and Keccak for hashing.
+
+## Table of Contents
+
+- [Nostringer Ring Signatures (Rust)](#nostringer-ring-signatures-rust)
+  - [Table of Contents](#table-of-contents)
+  - [Disclaimer](#disclaimer)
+  - [Problem Statement](#problem-statement)
+  - [Key Features](#key-features)
+  - [Installation](#installation)
+  - [Usage](#usage)
+  - [API Reference](#api-reference)
+    - [`sign(message: &[u8], private_key_hex: &str, ring_pubkeys_hex: &[String]) -> Result<RingSignature, Error>`](#signmessage-u8-private_key_hex-str-ring_pubkeys_hex-string---resultringsignature-error)
+    - [`verify(signature: &RingSignature, message: &[u8], ring_pubkeys_hex: &[String]) -> Result<bool, Error>`](#verifysignature-ringsignature-message-u8-ring_pubkeys_hex-string---resultbool-error)
+    - [`generate_keypair_hex(format: &str) -> KeyPairHex`](#generate_keypair_hexformat-str---keypairhex)
+    - [`RingSignature` Struct](#ringsignature-struct)
+    - [`KeyPairHex` Struct](#keypairhex-struct)
+    - [`Error` Enum](#error-enum)
+  - [Signature Size](#signature-size)
+  - [Security Considerations](#security-considerations)
+  - [License](#license)
+  - [References](#references)
+
+## Disclaimer
+
+> **This code is highly experimental.**
+> The original author is not a cryptographer, and this Rust port, while aiming for compatibility and correctness using standard libraries, **has not been audited or formally verified.**
+> Use for educational exploration **at your own risk.** Production usage is **strongly discouraged** until thorough security reviews and testing are performed by qualified individuals.
+
+## Problem Statement
+
+In many scenarios, you want to prove that "someone among these N credentials produced this signature," but you do **not** want to reveal _which_ credential or identity. For instance, you might have a set of recognized Nostr pubkeys (e.g., moderators, DAO members, authorized reviewers) who are allowed to perform certain actions, but you want them to remain anonymous within that set when doing so.
+
+A **ring signature** solves this by letting an individual sign a message _on behalf of the group_ (the ring). A verifier can confirm the message originated from **one** of the public keys in the ring, without learning the specific signer's identity.
+
+## Key Features
+
+- **Unlinkable**: Signatures hide the signer's identity. Two signatures from the same signer cannot be linked cryptographically.
+- **Fast**: Implemented in Rust, leveraging efficient and audited cryptographic primitives from the RustCrypto ecosystem (`k256`, `sha2`).
+- **Nostr Key Compatibility**: Directly supports standard Nostr key formats (hex strings):
+  - 32-byte (64-hex) x-only public keys.
+  - 33-byte (66-hex) compressed public keys.
+  - 65-byte (130-hex) uncompressed public keys.
+  - 32-byte (64-hex) private keys.
+- **Easy to Use**: Simple `sign`, `verify`, and `generate_keypair_hex` functions.
+- **Minimal Dependencies**: Relies on well-maintained RustCrypto crates.
+- **No Trusted Setup**: The scheme does not require any special setup ceremony.
 
 ## Installation
 
-Add this to your `Cargo.toml`:
+Add this crate to your `Cargo.toml` dependencies:
 
 ```toml
 [dependencies]
-nostringer-rs = "0.1.0"
+nostringer = "0.1.0" # Replace with the latest version from crates.io
 ```
+
+_(Note: You might need other crates like `hex` or `rand` in your own project depending on how you handle keys and messages.)_
 
 ## Usage
 
-### Standard ECDSA Signatures
-
 ```rust
-use nostringer_rs::{sign, verify};
-use secp256k1::SecretKey;
+use nostringer_ring::{sign, verify, generate_keypair_hex, RingSignature, Error};
 
-fn main() {
-    // Example secret key and public key
-    let seckey = [
-        // 32 bytes of secret key
-        59, 148, 11, 85, 134, 130, 61, 253, 2, 174, 59, 70, 27, 180, 51, 107, 
-        94, 203, 174, 253, 102, 39, 170, 146, 46, 252, 4, 143, 236, 12, 136, 28,
+fn main() -> Result<(), Error> {
+    // 1. Setup: Generate keys for the ring members
+    // Keys can be x-only, compressed, or uncompressed hex strings
+    let keypair1 = generate_keypair_hex("xonly");
+    let keypair2 = generate_keypair_hex("compressed");
+    let keypair3 = generate_keypair_hex("xonly");
+
+    let ring_pubkeys_hex: Vec<String> = vec![
+        keypair1.public_key_hex.clone(),
+        keypair2.public_key_hex.clone(), // Signer's key must be included
+        keypair3.public_key_hex.clone(),
     ];
-    let pubkey = [
-        // 33 bytes of public key (compressed format)
-        2, 29, 21, 35, 7, 198, 183, 43, 14, 208, 65, 139, 14, 112, 205, 128, 
-        231, 245, 41, 91, 141, 134, 245, 114, 45, 63, 82, 19, 251, 210, 57, 79, 54,
-    ];
-    
-    // Message to sign
-    let msg = b"This is some message";
-    
-    // Create a signature
-    let signature = sign(msg, seckey).unwrap();
-    let signature_bytes = signature.serialize_compact();
-    
-    // Verify the signature
-    let is_valid = verify(msg, signature_bytes, pubkey).unwrap();
+
+    // 2. Define the message to be signed (as bytes)
+    let message = b"This is a secret message to the group.";
+
+    // 3. Signer (keypair2) signs the message using their private key
+    println!("Signing message...");
+    let signature = sign(
+        message,
+        &keypair2.private_key_hex, // Signer's private key hex
+        &ring_pubkeys_hex,         // The full ring of public keys
+    )?;
+
+    println!("Generated Signature:");
+    println!(" c0: {}", signature.c0);
+    println!(" s: {:?}", signature.s);
+
+    // 4. Verification: Anyone can verify the signature against the ring and message
+    println!("\nVerifying signature...");
+    let is_valid = verify(
+        &signature,
+        message,
+        &ring_pubkeys_hex, // Must use the exact same ring (order matters for hashing)
+    )?;
+
+    println!("Signature valid: {}", is_valid);
     assert!(is_valid);
+
+    // 5. Tamper test: Verification should fail if the message changes
+    println!("\nVerifying with tampered message...");
+    let tampered_message = b"This is a different message.";
+    let is_tampered_valid = verify(
+        &signature,
+        tampered_message,
+        &ring_pubkeys_hex,
+    )?;
+    println!("Tampered signature valid: {}", is_tampered_valid);
+    assert!(!is_tampered_valid);
+
+    Ok(())
 }
 ```
 
-### Ring Signatures
+## API Reference
+
+### `sign(message: &[u8], private_key_hex: &str, ring_pubkeys_hex: &[String]) -> Result<RingSignature, Error>`
+
+Signs a message using the SAG-like ring signature scheme.
+
+- **`message`**: The message bytes (`&[u8]`) to sign.
+- **`private_key_hex`**: The signer's private key as a 64-character hex string.
+- **`ring_pubkeys_hex`**: A slice of public key hex strings representing the ring members. The signer's corresponding public key (or the key corresponding to the _negated_ private key) **must** be present in this ring. The order of keys matters for verification.
+- **Returns**: A `Result` containing the `RingSignature` on success, or an `Error` on failure (e.g., signer not in ring, invalid keys, ring too small).
+
+### `verify(signature: &RingSignature, message: &[u8], ring_pubkeys_hex: &[String]) -> Result<bool, Error>`
+
+Verifies a ring signature against a message and the ring of public keys.
+
+- **`signature`**: A reference to the `RingSignature` object (`{ c0, s }`).
+- **`message`**: The original message bytes (`&[u8]`) that were allegedly signed.
+- **`ring_pubkeys_hex`**: A slice of public key hex strings representing the ring. **Must** be identical (including order) to the ring used during signing.
+- **Returns**: A `Result` containing `true` if the signature is valid for the message and ring, or `false` if it's invalid. Returns an `Error` if inputs are malformed (e.g., wrong signature length, invalid hex).
+
+### `generate_keypair_hex(format: &str) -> KeyPairHex`
+
+Generates a new random secp256k1 key pair.
+
+- **`format`**: A string slice specifying the desired public key format:
+  - `"xonly"`: 64-hex (32 bytes), guaranteed even-Y point.
+  - `"compressed"`: 66-hex (33 bytes), starts with `02` or `03`.
+  - `"uncompressed"`: 130-hex (65 bytes), starts with `04`.
+  - Defaults to `"compressed"` if an unrecognized format is provided.
+- **Returns**: A `KeyPairHex` struct containing `private_key_hex` (String) and `public_key_hex` (String).
+  _Note: The returned `private_key_hex` is the original randomly generated scalar, even if internal negation was required to produce an even-Y public key for the `"xonly"` format._
+
+### `RingSignature` Struct
 
 ```rust
-use nostringer_rs::{ring_sign, RingSignature};
-use secp256k1::{Secp256k1, SecretKey, PublicKey};
-use rand_core::{OsRng, RngCore};
-
-fn main() {
-    let secp = Secp256k1::new();
-    let mut rng = OsRng;
-    
-    // Generate keys for a 3-member ring
-    let mut secret_keys = Vec::with_capacity(3);
-    let mut public_keys = Vec::with_capacity(3);
-    
-    for _ in 0..3 {
-        let mut key_bytes = [0u8; 32];
-        rng.fill_bytes(&mut key_bytes);
-        
-        let secret_key = SecretKey::from_slice(&key_bytes).unwrap();
-        let public_key = PublicKey::from_secret_key(&secp, &secret_key);
-        
-        secret_keys.push(secret_key);
-        public_keys.push(public_key);
-    }
-    
-    // Message to sign
-    let message = b"Test ring signature message";
-    
-    // Create a ring signature with the first key
-    let ring_signature = ring_sign(message, &secret_keys[0], &public_keys).unwrap();
-    
-    // Verify the ring signature
-    let is_valid = ring_signature.verify(message, &public_keys).unwrap();
-    
-    // Note: The verifier cannot determine which key was used to create the signature
+pub struct RingSignature {
+  pub c0: String, // Initial challenge scalar (64-char hex)
+  pub s: Vec<String>, // Array of response scalars (64-char hex strings)
 }
 ```
 
-## Security Notes
+### `KeyPairHex` Struct
 
-- Ring signatures provide anonymity within the group of public keys, but do not hide the group itself
-- Always use cryptographically secure random number generators for key generation
-- The library applies best practices for cryptographic operations, but has not undergone a formal security audit
-- For production use, please review and test thoroughly
-
-## Development
-
-### Building
-
-```
-cargo build
+```rust
+pub struct KeyPairHex {
+  pub private_key_hex: String, // 64-char hex
+  pub public_key_hex: String,  // Hex format depends on generation option
+}
 ```
 
-### Testing
+### `Error` Enum
 
-```
-cargo test
-```
+An enum representing possible errors during signing or verification, such as invalid key formats, signer not found in the ring, ring too small, hex decoding errors, or internal cryptographic errors.
 
-### Benchmarking
+## Signature Size
 
-```
-cargo bench
-```
+The size of the generated ring signature depends directly on the number of members (`n`) in the ring. It consists of:
+
+- One initial challenge (`c0`) scalar (32 bytes binary / 64 hex chars).
+- `n` response scalars (`s` array) (each 32 bytes binary / 64 hex chars).
+
+The total **binary size** follows the formula:
+`Size (bytes) = 32 * (n + 1)`
+
+This means the signature size grows **linearly** with the ring size. A larger ring provides more anonymity but results in a larger signature.
+
+## Security Considerations
+
+- **Anonymity Set**: The level of anonymity depends on the size (`n`) and plausibility of the chosen ring members. Ensure the ring containskeys that could _realistically_ be the signer in the given context.
+- **No Trusted Setup**: This scheme does not require any trusted setup procedure.
+- **Unlinkability**: Signatures produced by the same signer for different messages (using the same or different rings) should be cryptographically unlinkable.
+- **No Traceability**: This specific SAG implementation does not produce linkability tags (like key images used in Monero's MLSAG/CLSAG) which would allow detecting if the _same key_ was used to sign twice within _different_ rings for the _same_ message. This enhances privacy but means double-spending prevention requires other mechanisms if used for voting/claiming.
+- **Implementation Security**: This library relies on the correctness of the underlying `k256` crate. While `k256` is well-regarded, this specific ring signature implementation has **not** been independently audited.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the [MIT License](LICENSE).
 
-## Contributing
+## References
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+- [Linkable Spontaneous Anonymous Group Signature for Ad Hoc Groups](https://eprint.iacr.org/2004/027.pdf) - (Joseph Liu et al., 2004) – basis of LSAG.
+- [Beritani, ring-signatures JS library](https://github.com/beritani/ring-signatures) – Ed25519 ring signature implementation (SAG, bLSAG, MLSAG, CLSAG)​.
+- [Blockstream Elements rust-secp256k1-zkp library](https://github.com/BlockstreamResearch/rust-secp256k1-zkp) – Whitelist Ring Signature in libsecp256k1-zkp (C code exposed via Rust)​.
+- [Zero to Monero 2.0 – Chapter 3, ring signature algorithms](https://www.getmonero.org/library/Zero-to-Monero-2-0-0.pdf).
+- [Cronokirby Blog – On Monero's Ring Signatures](https://cronokirby.com/posts/2022/03/on-moneros-ring-signatures), explains Schnorr ring signatures in detail​.
+
+---
+
+Built with love by [AbdelStark](https://github.com/AbdelStark) 🧡
+
+Feel free to follow me on Nostr if you'd like, using my public key:
+
+```text
+npub1hr6v96g0phtxwys4x0tm3khawuuykz6s28uzwtj5j0zc7lunu99snw2e29
+```
+
+Or just **scan this QR code** to find me:
+
+![Nostr Public Key QR Code](https://hackmd.io/_uploads/SkAvwlYYC.png)
