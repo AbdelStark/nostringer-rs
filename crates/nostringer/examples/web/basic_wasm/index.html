@@ -207,8 +207,8 @@ Click "Generate Keys for Ring" to start...</pre
             const format = "xonly";
             const keypair = wasm_generate_keypair(format);
             state.keypairs.push({
-              privateKeyHex: keypair.private_key_hex(),
-              publicKeyHex: keypair.public_key_hex(),
+              privateKeyHex: keypair.private_key_hex,
+              publicKeyHex: keypair.public_key_hex,
             });
           }
 
@@ -259,14 +259,13 @@ Click "Generate Keys for Ring" to start...</pre
 
           // Display the signature
           output.textContent += "Generated Ring Signature:\n";
-          output.textContent += `c0: ${state.signature
-            .c0()
-            .substring(0, 10)}...${state.signature
-            .c0()
-            .substring(state.signature.c0().length - 10)}\n`;
-          output.textContent += `s values: [${
-            state.signature.s().length
-          } scalars]\n`;
+          output.textContent += `c0: ${state.signature.c0.substring(
+            0,
+            10
+          )}...${state.signature.c0.substring(
+            state.signature.c0.length - 10
+          )}\n`;
+          output.textContent += `s values: [${state.signature.s.length} scalars]\n`;
 
           output.textContent +=
             '\nClick "Verify Signature" to verify it against the ring.';
@@ -356,8 +355,8 @@ Click "Generate Keys for Ring" to start...</pre
             const format = "xonly";
             const keypair = wasm_generate_keypair(format);
             blsagState.keypairs.push({
-              privateKeyHex: keypair.private_key_hex(),
-              publicKeyHex: keypair.public_key_hex(),
+              privateKeyHex: keypair.private_key_hex,
+              publicKeyHex: keypair.public_key_hex,
             });
           }
 
@@ -408,18 +407,18 @@ Click "Generate Keys for Ring" to start...</pre
             blsagState.ringPubkeys
           );
           blsagState.signatures[messageIndex] = result;
-          blsagState.keyImages[messageIndex] = result.key_image();
+          blsagState.keyImages[messageIndex] = result.key_image;
 
           // Display the signature
           output.textContent += "Generated BLSAG Signature:\n";
-          output.textContent += `c0: ${result.c0().substring(0, 10)}...${result
-            .c0()
-            .substring(result.c0().length - 10)}\n`;
-          output.textContent += `Key Image: ${result
-            .key_image()
-            .substring(0, 10)}...${result
-            .key_image()
-            .substring(result.key_image().length - 10)}\n`;
+          output.textContent += `c0: ${result.c0.substring(
+            0,
+            10
+          )}...${result.c0.substring(result.c0.length - 10)}\n`;
+          output.textContent += `Key Image: ${result.key_image.substring(
+            0,
+            10
+          )}...${result.key_image.substring(result.key_image.length - 10)}\n`;
 
           // Verify immediately
           const isValid = wasm_verify_blsag(
