@@ -3,7 +3,7 @@ members = ["crates/nostringer", "crates/nostringer_cli"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.3"
+version = "0.1.4"
 authors = ["AbdelStark <@AbdelStark>"]
 description = "A Rust implementation of the ring signature scheme in the nostringer TypeScript library"
 repository = "https://github.com/AbdelStark/nostringer-rs"
