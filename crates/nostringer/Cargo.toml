@@ -21,7 +21,8 @@ thiserror = { workspace = true }
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]
-criterion = { workspace = true }
+criterion = { version = "0.4", features = ["html_reports"] }
+colored = "2.0"
 
 [features]
 default = []

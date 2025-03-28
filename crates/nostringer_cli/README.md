@@ -62,6 +62,9 @@ nostringer_cli verify \
 ```bash
 # Run an end-to-end demo of the ring signature process
 nostringer_cli demo
+
+# Run a demo of the linkable BLSAG variant (with key images)
+nostringer_cli blsag-demo
 ```
 
 ## Examples

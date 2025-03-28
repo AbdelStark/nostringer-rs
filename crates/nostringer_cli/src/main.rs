@@ -4,7 +4,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use nostringer::{generate_keypair_hex, sign, verify, KeyPairHex, RingSignature};
+use nostringer::{
+    generate_keypair_hex, generate_keypairs, get_public_keys, key_images_match, sign,
+    sign_blsag_hex, types::KeyImage, verify, verify_blsag_hex, KeyPairHex, RingSignature,
+};
 
 /// Command-line interface for the nostringer ring signature library
 #[derive(Parser)]
@@ -68,6 +71,9 @@ enum Commands {
 
     /// Run a complete demo of the ring signature process
     Demo,
+
+    /// Run a demo of the linkable bLSAG ring signature variant
+    BlsagDemo,
 }
 
 fn main() -> Result<()> {
@@ -135,6 +141,10 @@ fn main() -> Result<()> {
 
         Commands::Demo => {
             run_demo()?;
+        }
+
+        Commands::BlsagDemo => {
+            run_blsag_demo()?;
         }
     }
 
@@ -289,6 +299,206 @@ fn run_demo() -> Result<()> {
     }
 
     println!("\n{}", "=== DEMO COMPLETE ===".bold().green());
+    Ok(())
+}
+
+/// Run a demo of the bLSAG (Back's Linkable Spontaneous Anonymous Group) signature scheme
+fn run_blsag_demo() -> Result<()> {
+    println!(
+        "\n{}",
+        "=== NOSTRINGER BLSAG (LINKABLE) RING SIGNATURE DEMO ==="
+            .bold()
+            .green()
+    );
+    println!(
+        "{}",
+        "This demo shows how bLSAG signatures can be linked when signed by the same key.".italic()
+    );
+
+    println!(
+        "\n{}",
+        "1. Generating keypairs for 5 ring members...".bold()
+    );
+    let keypairs = generate_keypairs(5, "xonly");
+    let ring_pubkeys = get_public_keys(&keypairs);
+
+    // Display ring members
+    for (i, pubkey) in ring_pubkeys.iter().enumerate() {
+        let short_key = format!("{}...{}", &pubkey[0..8], &pubkey[pubkey.len() - 8..]);
+        println!("Ring Member {}: {}", i + 1, short_key.cyan());
+    }
+
+    println!("\n{}", "2. Selecting Ring Member 3 as our signer.".bold());
+    let signer_index = 2; // 0-based index for the third member
+    let signer = &keypairs[signer_index];
+
+    println!(
+        "\n{}",
+        "3. Creating and signing two different messages.".bold()
+    );
+
+    // First message and signature
+    let message1 = "Vote for Proposal #1: Increase community budget";
+    println!("\nFirst message: {}", message1.green());
+
+    let (signature1, key_image1_hex) =
+        sign_blsag_hex(message1.as_bytes(), &signer.private_key_hex, &ring_pubkeys)
+            .context("Failed to create first signature")?;
+
+    println!(
+        "Created signature with key image: {}",
+        key_image1_hex[0..16].bright_magenta()
+    );
+
+    // Verify first signature
+    let is_valid1 = verify_blsag_hex(
+        &signature1,
+        &key_image1_hex,
+        message1.as_bytes(),
+        &ring_pubkeys,
+    )
+    .context("Failed to verify first signature")?;
+
+    println!(
+        "Verification result: {}",
+        if is_valid1 {
+            "Valid ✓".green().bold()
+        } else {
+            "Invalid ✗".red().bold()
+        }
+    );
+
+    // Parse key image for comparison
+    let key_image1 = KeyImage::from_hex(&key_image1_hex)?;
+
+    // Second message and signature (with the same signer)
+    let message2 = "Vote for Proposal #2: Fund development team";
+    println!("\nSecond message: {}", message2.green());
+
+    let (signature2, key_image2_hex) =
+        sign_blsag_hex(message2.as_bytes(), &signer.private_key_hex, &ring_pubkeys)
+            .context("Failed to create second signature")?;
+
+    println!(
+        "Created signature with key image: {}",
+        key_image2_hex[0..16].bright_magenta()
+    );
+
+    // Verify second signature
+    let is_valid2 = verify_blsag_hex(
+        &signature2,
+        &key_image2_hex,
+        message2.as_bytes(),
+        &ring_pubkeys,
+    )
+    .context("Failed to verify second signature")?;
+
+    println!(
+        "Verification result: {}",
+        if is_valid2 {
+            "Valid ✓".green().bold()
+        } else {
+            "Invalid ✗".red().bold()
+        }
+    );
+
+    // Parse key image for comparison
+    let key_image2 = KeyImage::from_hex(&key_image2_hex)?;
+
+    // Third message with a different signer
+    println!(
+        "\n{}",
+        "4. Creating one more signature with a different ring member.".bold()
+    );
+
+    let different_signer_index = 4; // The fifth ring member
+    let different_signer = &keypairs[different_signer_index];
+
+    let message3 = "Vote for Proposal #3: Update governance rules";
+    println!("\nThird message: {}", message3.green());
+    println!("Signing with Ring Member {}", different_signer_index + 1);
+
+    let (signature3, key_image3_hex) = sign_blsag_hex(
+        message3.as_bytes(),
+        &different_signer.private_key_hex,
+        &ring_pubkeys,
+    )
+    .context("Failed to create third signature")?;
+
+    println!(
+        "Created signature with key image: {}",
+        key_image3_hex[0..16].bright_magenta()
+    );
+
+    // Verify third signature
+    let is_valid3 = verify_blsag_hex(
+        &signature3,
+        &key_image3_hex,
+        message3.as_bytes(),
+        &ring_pubkeys,
+    )
+    .context("Failed to verify third signature")?;
+
+    println!(
+        "Verification result: {}",
+        if is_valid3 {
+            "Valid ✓".green().bold()
+        } else {
+            "Invalid ✗".red().bold()
+        }
+    );
+
+    // Parse key image for comparison
+    let key_image3 = KeyImage::from_hex(&key_image3_hex)?;
+
+    // Compare key images to detect linkability
+    println!(
+        "\n{}",
+        "5. Detecting signature linkability through key images.".bold()
+    );
+
+    let same_signer_1_2 = key_images_match(&key_image1, &key_image2);
+    let same_signer_1_3 = key_images_match(&key_image1, &key_image3);
+
+    println!(
+        "Are signatures 1 and 2 from the same signer? {}",
+        if same_signer_1_2 {
+            "YES ✓".green().bold()
+        } else {
+            "NO ✗".red().bold()
+        }
+    );
+
+    println!(
+        "Are signatures 1 and 3 from the same signer? {}",
+        if same_signer_1_3 {
+            "YES ✓".green().bold()
+        } else {
+            "NO ✗".red().bold()
+        }
+    );
+
+    // Explanation of bLSAG vs regular SAG
+    println!(
+        "\n{}",
+        "UNDERSTANDING BLSAG VS REGULAR SAG:".bold().yellow()
+    );
+    println!("1. Regular SAG signatures are completely unlinkable");
+    println!("   - No way to tell if two signatures came from the same signer");
+    println!("   - Provides maximum privacy within the ring");
+    println!();
+    println!("2. bLSAG signatures are linkable but still anonymous");
+    println!("   - Can detect when the same key signs multiple times (through key images)");
+    println!("   - Still doesn't reveal which specific ring member signed");
+    println!("   - Useful for preventing double-spending or duplicate voting");
+    println!("   - The key image is unique to the private key but doesn't expose it");
+    println!();
+    println!("3. Both variants provide:");
+    println!("   - Ring signature verification (proving a member of the ring signed)");
+    println!("   - Anonymity (hiding which specific member signed)");
+    println!("   - Spontaneous group creation (no coordinator needed)");
+
+    println!("\n{}", "=== BLSAG DEMO COMPLETE ===".bold().green());
     Ok(())
 }
 

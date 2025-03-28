@@ -81,6 +81,7 @@ A **ring signature** solves this by letting an individual sign a message _on beh
 ## Key Features
 
 - **Unlinkable**: Signatures hide the signer's identity. Two signatures from the same signer cannot be linked cryptographically.
+- **Linkable Option**: The BLSAG variant provides linkability through key images to detect when the same key is used multiple times, while still preserving anonymity within the ring.
 - **Fast**: Implemented in Rust, leveraging efficient and audited cryptographic primitives from the RustCrypto ecosystem (`k256`, `sha2`).
 - **Optimized API**: Provides both hex-string based API and a more efficient binary API that avoids serialization/deserialization overhead.
 - **Nostr Key Compatibility**: Directly supports standard Nostr key formats (hex strings):
@@ -176,14 +177,14 @@ fn main() -> Result<(), Error> {
     let private_key = /* Scalar value */;
     let ring_pubkeys = /* Vec<ProjectivePoint> */;
     let message = b"This is a secret message to the group.";
-    
+
     // Sign using binary API (more efficient)
     let binary_signature = sign_binary(message, &private_key, &ring_pubkeys)?;
-    
+
     // Verify using binary API (more efficient)
     let is_valid = verify_binary(&binary_signature, message, &ring_pubkeys)?;
     println!("Signature valid: {}", is_valid);
-    
+
     Ok(())
 }
 ```
@@ -204,7 +205,13 @@ The repository includes several examples that demonstrate different aspects of t
    cargo run --example key_formats
    ```
 
-3. **Error Handling** (`examples/error_handling.rs`): Demonstrates proper error handling for common error scenarios.
+3. **BLSAG Linkability** (`examples/blsag_linkability.rs`): Demonstrates the linkable BLSAG variant and how to detect when the same key is used for multiple signatures.
+
+   ```bash
+   cargo run --example blsag_linkability
+   ```
+
+4. **Error Handling** (`examples/error_handling.rs`): Demonstrates proper error handling for common error scenarios.
 
    ```bash
    cargo run --example error_handling
@@ -325,6 +332,32 @@ pub struct RingSignatureBinary {
 }
 ```
 
+### `BlsagSignature` Struct
+
+```rust
+pub struct BlsagSignature {
+  pub c0: String, // Initial challenge scalar (64-char hex)
+  pub s: Vec<String>, // Array of response scalars (64-char hex strings)
+}
+```
+
+### `BlsagSignatureBinary` Struct
+
+```rust
+pub struct BlsagSignatureBinary {
+  pub c0: Scalar, // Initial challenge scalar in binary form
+  pub s: Vec<Scalar>, // Array of response scalars in binary form
+}
+```
+
+### `KeyImage` Struct
+
+```rust
+pub struct KeyImage(pub ProjectivePoint);
+```
+
+A struct representing a key image for linkable signatures. Key images uniquely identify the signer's private key without revealing it. Provided with methods to convert to/from hex strings and compare for equality.
+
 ### `KeyPairHex` Struct
 
 ```rust
@@ -347,6 +380,52 @@ pub struct KeyPair {
 
 An enum representing possible errors during signing or verification, such as invalid key formats, signer not found in the ring, ring too small, hex decoding errors, or internal cryptographic errors.
 
+### `sign_blsag_binary(message: &[u8], private_key: &Scalar, ring_pubkeys: &[ProjectivePoint]) -> Result<(BlsagSignatureBinary, KeyImage), Error>`
+
+Creates a BLSAG (linkable) signature using binary inputs.
+
+- **`message`**: The message bytes (`&[u8]`) to sign.
+- **`private_key`**: The signer's private key as a `k256::Scalar`.
+- **`ring_pubkeys`**: A slice of public keys as `k256::ProjectivePoint` representing the ring members.
+- **Returns**: A `Result` containing a tuple of `(BlsagSignatureBinary, KeyImage)` on success, or an `Error` on failure. The KeyImage can be used to detect when the same key is used for multiple signatures.
+
+### `verify_blsag_binary(signature: &BlsagSignatureBinary, key_image: &KeyImage, message: &[u8], ring_pubkeys: &[ProjectivePoint]) -> Result<bool, Error>`
+
+Verifies a BLSAG (linkable) signature using binary inputs.
+
+- **`signature`**: The binary BLSAG signature to verify.
+- **`key_image`**: The key image associated with the signature.
+- **`message`**: The message bytes that were allegedly signed.
+- **`ring_pubkeys`**: A slice of public keys as `k256::ProjectivePoint` representing the ring.
+- **Returns**: A `Result` containing `true` if the signature is valid, or `false` if it's invalid.
+
+### `sign_blsag_hex(message: &[u8], private_key_hex: &str, ring_pubkeys_hex: &[String]) -> Result<(BlsagSignature, String), Error>`
+
+Creates a BLSAG (linkable) signature using hex inputs.
+
+- **`message`**: The message bytes (`&[u8]`) to sign.
+- **`private_key_hex`**: The signer's private key as a 64-character hex string.
+- **`ring_pubkeys_hex`**: A slice of public key hex strings representing the ring.
+- **Returns**: A `Result` containing a tuple of `(BlsagSignature, String)` on success, or an `Error` on failure. The second element is the key image as a hex string.
+
+### `verify_blsag_hex(signature_hex: &BlsagSignature, key_image_hex: &str, message: &[u8], ring_pubkeys_hex: &[String]) -> Result<bool, Error>`
+
+Verifies a BLSAG (linkable) signature using hex inputs.
+
+- **`signature_hex`**: The hex BLSAG signature to verify.
+- **`key_image_hex`**: The key image hex string associated with the signature.
+- **`message`**: The message bytes that were allegedly signed.
+- **`ring_pubkeys_hex`**: A slice of public key hex strings representing the ring.
+- **Returns**: A `Result` containing `true` if the signature is valid, or `false` if it's invalid.
+
+### `key_images_match(image1: &KeyImage, image2: &KeyImage) -> bool`
+
+Compares two key images to determine if they were created by the same signer.
+
+- **`image1`**: The first key image to compare.
+- **`image2`**: The second key image to compare.
+- **Returns**: `true` if the key images match (same signer), `false` otherwise.
+
 ## Signature Size
 
 The size of the generated ring signature depends directly on the number of members (`n`) in the ring. It consists of:
@@ -361,11 +440,36 @@ This means the signature size grows **linearly** with the ring size. A larger ri
 
 ## Security Considerations
 
-- **Anonymity Set**: The level of anonymity depends on the size (`n`) and plausibility of the chosen ring members. Ensure the ring containskeys that could _realistically_ be the signer in the given context.
+- **Anonymity Set**: The level of anonymity depends on the size (`n`) and plausibility of the chosen ring members. Ensure the ring contains keys that could _realistically_ be the signer in the given context.
 - **No Trusted Setup**: This scheme does not require any trusted setup procedure.
-- **Unlinkability**: Signatures produced by the same signer for different messages (using the same or different rings) should be cryptographically unlinkable.
-- **No Traceability**: This specific SAG implementation does not produce linkability tags (like key images used in Monero's MLSAG/CLSAG) which would allow detecting if the _same key_ was used to sign twice within _different_ rings for the _same_ message. This enhances privacy but means double-spending prevention requires other mechanisms if used for voting/claiming.
+- **Unlinkability vs. Linkability**:
+  - **SAG**: The default SAG implementation provides complete unlinkability. Signatures produced by the same signer for different messages (using the same or different rings) are cryptographically unlinkable.
+  - **BLSAG**: The BLSAG variant intentionally provides linkability through key images. These key images allow detecting when the same key signed multiple messages, while still preserving anonymity (not revealing which specific ring member is the signer).
 - **Implementation Security**: This library relies on the correctness of the underlying `k256` crate. While `k256` is well-regarded, this specific ring signature implementation has **not** been independently audited.
+
+## Signature Variants
+
+The library offers two main variants of ring signatures:
+
+### 1. SAG (Spontaneous Anonymous Group)
+
+The default variant that provides:
+
+- Complete unlinkability (no way to tell if two signatures came from the same signer)
+- Maximum privacy within the ring
+- Suitable for anonymous voting, whistleblowing, or any scenario requiring maximum privacy
+
+### 2. BLSAG (Back's Linkable Spontaneous Anonymous Group)
+
+A linkable variant that:
+
+- Produces a key image along with the signature to enable linkability
+- Can detect when the same key signs multiple times (via the key image)
+- Still doesn't reveal which specific ring member signed (preserves anonymity within the ring)
+- Suitable for preventing double-spending, duplicate voting, or tracking usage of a credential
+- Similar to the linkable ring signature scheme used in Monero
+
+Choose the variant that best suits your privacy and security requirements.
 
 ## License
 
