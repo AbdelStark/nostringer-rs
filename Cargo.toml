@@ -3,7 +3,7 @@ members = ["crates/nostringer", "crates/nostringer_cli"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.2"
+version = "0.1.3"
 authors = ["AbdelStark <@AbdelStark>"]
 description = "A Rust implementation of the ring signature scheme in the nostringer TypeScript library"
 repository = "https://github.com/AbdelStark/nostringer-rs"
@@ -16,7 +16,7 @@ categories = ["cryptography", "authentication"]
 [workspace.dependencies]
 # Core crate dependencies
 hex = "0.4.3"
-k256 = { version = "0.13.1", features = ["ecdsa"] }
+k256 = { version = "0.13.4", features = ["ecdsa"] }
 rand = "0.8.5"
 sha2 = "0.10.7"
 subtle = "2.5.0"

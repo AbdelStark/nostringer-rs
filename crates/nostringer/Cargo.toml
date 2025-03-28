@@ -13,7 +13,7 @@ readme = "../../README.md"
 
 [dependencies]
 hex = { workspace = true }
-k256 = { workspace = true }
+k256 = { workspace = true, features = ["arithmetic"] }
 rand = { workspace = true }
 sha2 = { workspace = true }
 subtle = { workspace = true }

@@ -1,10 +1,12 @@
+use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::elliptic_curve::PrimeField;
 use k256::{ProjectivePoint, Scalar};
 use thiserror::Error;
-
 // Optional: Add serde imports gated by feature
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+
+use crate::utils::hex_to_point;
 
 /// Errors that can occur during ring signature operations
 #[derive(Error, Debug)]
@@ -124,6 +126,86 @@ impl TryFrom<&RingSignature> for RingSignatureBinary {
             .collect::<Result<Vec<Scalar>, Error>>()?;
 
         Ok(RingSignatureBinary { c0, s })
+    }
+}
+
+/// Represents the Key Image (`I = k * Hp(P)`) used in linkable ring signatures (bLSAG).
+/// It is unique per private key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))] // Add serde if needed for hex version
+pub struct KeyImage(
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "k256::elliptic_curve::serde::ProjectivePoint")
+    )] // Use k256 serde helper if needed
+    pub  ProjectivePoint,
+);
+
+impl KeyImage {
+    /// Returns the inner ProjectivePoint.
+    pub fn as_point(&self) -> &ProjectivePoint {
+        &self.0
+    }
+
+    /// Creates a KeyImage from a ProjectivePoint.
+    /// Note: Does not guarantee the point was correctly derived.
+    pub fn from_point(point: ProjectivePoint) -> Self {
+        KeyImage(point)
+    }
+
+    /// Returns the compressed hex representation of the key image.
+    pub fn to_hex(&self) -> String {
+        hex::encode(self.0.to_encoded_point(true).as_bytes())
+    }
+
+    /// Attempts to create a KeyImage from a compressed hex string.
+    /// Validates that the point is on the curve.
+    pub fn from_hex(hex_str: &str) -> Result<Self, Error> {
+        let point = hex_to_point(hex_str)?; // hex_to_point already validates
+        Ok(KeyImage(point))
+    }
+}
+
+/// Binary representation of a bLSAG signature (linkable).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlsagSignatureBinary {
+    /// The initial commitment scalar value (c₀).
+    pub c0: Scalar,
+    /// Vector of response scalars (s_i).
+    pub s: Vec<Scalar>,
+}
+
+/// Hex representation of a bLSAG signature (linkable).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct BlsagSignature {
+    /// The initial commitment scalar value (c₀) encoded as hex.
+    pub c0: String,
+    /// Vector of response scalars (s_i) encoded as hex.
+    pub s: Vec<String>,
+}
+
+// --- Conversions for bLSAG Signatures ---
+
+impl From<&BlsagSignatureBinary> for BlsagSignature {
+    fn from(binary: &BlsagSignatureBinary) -> Self {
+        BlsagSignature {
+            c0: scalar_to_hex(&binary.c0),
+            s: binary.s.iter().map(scalar_to_hex).collect(),
+        }
+    }
+}
+
+impl TryFrom<&BlsagSignature> for BlsagSignatureBinary {
+    type Error = Error;
+    fn try_from(sig: &BlsagSignature) -> Result<Self, Self::Error> {
+        let c0 = hex_to_scalar(&sig.c0)?;
+        let s = sig
+            .s
+            .iter()
+            .map(|s_hex| hex_to_scalar(s_hex))
+            .collect::<Result<Vec<Scalar>, Error>>()?;
+        Ok(BlsagSignatureBinary { c0, s })
     }
 }
 

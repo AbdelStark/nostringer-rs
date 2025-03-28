@@ -1,4 +1,11 @@
-use nostringer::{generate_keypair_hex, generate_keypairs, get_public_keys, sign, verify, Error};
+use k256::ProjectivePoint;
+use nostringer::{
+    generate_keypair_hex, generate_keypairs, get_public_keys, key_images_match, sign,
+    sign_blsag_hex,
+    types::{BlsagSignatureBinary, KeyImage},
+    utils::hex_to_point,
+    verify, verify_blsag_binary, verify_blsag_hex, Error,
+};
 
 #[test]
 fn test_sign_verify_round_trip_xonly() {
@@ -218,4 +225,224 @@ fn test_nostr_event_simulation() {
     let is_tampered_valid = verify(&signature, tampered_message_bytes, &developer_ring)
         .expect("Tampered verification process failed");
     assert!(!is_tampered_valid, "Tampered message should not verify");
+}
+
+#[test]
+fn test_blsag_sign_verify_round_trip() {
+    // 1. Setup Ring
+    let ring_size = 3;
+    let keypairs = generate_keypairs(ring_size, "compressed"); // Use any valid format
+    let ring_pubkeys_hex = get_public_keys(&keypairs);
+
+    // 2. Choose Signer & Message
+    let signer_index = 1;
+    let signer_kp = &keypairs[signer_index];
+    let message = b"Test message for bLSAG round trip";
+
+    // 3. Sign using bLSAG (hex version)
+    let sign_result = sign_blsag_hex(message, &signer_kp.private_key_hex, &ring_pubkeys_hex);
+    assert!(
+        sign_result.is_ok(),
+        "bLSAG signing failed: {:?}",
+        sign_result.err()
+    );
+    let (signature, key_image_hex) = sign_result.unwrap();
+
+    // Basic structure checks
+    assert_eq!(signature.c0.len(), 64, "c0 hex length mismatch");
+    assert_eq!(signature.s.len(), ring_size, "s array length mismatch");
+    signature.s.iter().for_each(|s_val| {
+        assert_eq!(s_val.len(), 64, "s element hex length mismatch");
+    });
+    assert_eq!(
+        key_image_hex.len(),
+        66,
+        "Key image hex length mismatch (should be compressed point)"
+    ); // Key image is point -> compressed hex
+
+    // 4. Verify using bLSAG (hex version)
+    let verify_result = verify_blsag_hex(&signature, &key_image_hex, message, &ring_pubkeys_hex);
+    assert!(
+        verify_result.is_ok(),
+        "bLSAG verification failed: {:?}",
+        verify_result.err()
+    );
+    assert!(verify_result.unwrap(), "bLSAG signature failed to verify");
+
+    // 5. Verification should fail with tampered message
+    let tampered_message = b"This message has been tampered with";
+    let verify_tampered_msg = verify_blsag_hex(
+        &signature,
+        &key_image_hex,
+        tampered_message,
+        &ring_pubkeys_hex,
+    );
+    assert!(
+        verify_tampered_msg.is_ok(),
+        "Tampered msg verification failed: {:?}",
+        verify_tampered_msg.err()
+    );
+    assert!(
+        !verify_tampered_msg.unwrap(),
+        "bLSAG verification should fail for tampered message"
+    );
+
+    // 6. Verification should fail with wrong ring
+    let other_keypairs = generate_keypairs(ring_size, "compressed");
+    let wrong_ring = get_public_keys(&other_keypairs);
+    let verify_wrong_ring = verify_blsag_hex(&signature, &key_image_hex, message, &wrong_ring);
+    assert!(
+        verify_wrong_ring.is_ok(),
+        "Wrong ring verification failed: {:?}",
+        verify_wrong_ring.err()
+    );
+    assert!(
+        !verify_wrong_ring.unwrap(),
+        "bLSAG verification should fail for wrong ring"
+    );
+}
+
+#[test]
+fn test_blsag_linkability_and_key_image_comparison() {
+    // 1. Setup Ring
+    let ring_size = 4; // Use a slightly larger ring
+    let keypairs = generate_keypairs(ring_size, "xonly");
+    let ring_pubkeys_hex = get_public_keys(&keypairs);
+
+    // 2. Define Messages
+    let message1 = b"First transaction approval";
+    let message2 = b"Second transaction approval by same user";
+    let message3 = b"Completely different action by another user";
+
+    // 3. Choose Signers
+    let signer1_index = 1;
+    let signer1_kp = &keypairs[signer1_index]; // Signer for msg 1 & 2
+
+    let signer2_index = 3;
+    let signer2_kp = &keypairs[signer2_index]; // Signer for msg 3
+
+    // --- Signature 1 (Signer 1, Message 1) ---
+    let (sig1, ki1_hex) = sign_blsag_hex(message1, &signer1_kp.private_key_hex, &ring_pubkeys_hex)
+        .expect("Signing 1 failed");
+    let verify1 =
+        verify_blsag_hex(&sig1, &ki1_hex, message1, &ring_pubkeys_hex).expect("Verifying 1 failed");
+    assert!(verify1, "Signature 1 should be valid");
+    // Convert hex to KeyImage struct for comparison using helper
+    let ki1 = KeyImage::from_hex(&ki1_hex).expect("Parsing key image 1 failed");
+
+    // --- Signature 2 (Signer 1, Message 2) ---
+    // Use the SAME signer (signer1_kp) but DIFFERENT message
+    let (sig2, ki2_hex) = sign_blsag_hex(message2, &signer1_kp.private_key_hex, &ring_pubkeys_hex)
+        .expect("Signing 2 failed");
+    let verify2 =
+        verify_blsag_hex(&sig2, &ki2_hex, message2, &ring_pubkeys_hex).expect("Verifying 2 failed");
+    assert!(verify2, "Signature 2 should be valid");
+    let ki2 = KeyImage::from_hex(&ki2_hex).expect("Parsing key image 2 failed");
+
+    // --- Signature 3 (Signer 2, Message 3) ---
+    // Use a DIFFERENT signer (signer2_kp)
+    let (sig3, ki3_hex) = sign_blsag_hex(message3, &signer2_kp.private_key_hex, &ring_pubkeys_hex)
+        .expect("Signing 3 failed");
+    let verify3 =
+        verify_blsag_hex(&sig3, &ki3_hex, message3, &ring_pubkeys_hex).expect("Verifying 3 failed");
+    assert!(verify3, "Signature 3 should be valid");
+    let ki3 = KeyImage::from_hex(&ki3_hex).expect("Parsing key image 3 failed");
+
+    // --- LINKABILITY CHECKS ---
+
+    // A. Check if signatures from the SAME signer produce the SAME key image
+    println!("Key Image 1 (Signer 1): {}", ki1_hex);
+    println!("Key Image 2 (Signer 1): {}", ki2_hex);
+    assert_eq!(
+        ki1_hex, ki2_hex,
+        "Key images from the same signer (sig1, sig2) should match"
+    );
+    // Alternatively, use the helper function on the structs:
+    assert!(
+        key_images_match(&ki1, &ki2),
+        "key_images_match should return true for sig1 & sig2"
+    );
+
+    // B. Check if signatures from DIFFERENT signers produce DIFFERENT key images
+    println!("Key Image 3 (Signer 2): {}", ki3_hex);
+    assert_ne!(
+        ki1_hex, ki3_hex,
+        "Key images from different signers (sig1, sig3) should NOT match"
+    );
+    assert!(
+        !key_images_match(&ki1, &ki3),
+        "key_images_match should return false for sig1 & sig3"
+    );
+    assert_ne!(
+        ki2_hex, ki3_hex,
+        "Key images from different signers (sig2, sig3) should NOT match"
+    );
+    assert!(
+        !key_images_match(&ki2, &ki3),
+        "key_images_match should return false for sig2 & sig3"
+    );
+
+    // --- Negative Verification Check ---
+
+    // C. Check that verifying sig1 with key image from sig3 FAILS
+    let verify_mismatched_ki = verify_blsag_hex(&sig1, &ki3_hex, message1, &ring_pubkeys_hex);
+    assert!(
+        verify_mismatched_ki.is_ok(),
+        "Verification with mismatched KI failed unexpectedly: {:?}",
+        verify_mismatched_ki.err()
+    );
+    assert!(
+        !verify_mismatched_ki.unwrap(),
+        "Verification should fail when using wrong key image"
+    );
+}
+
+#[test]
+fn test_blsag_key_image_validation() {
+    // More advanced: Test the internal key image checks in verify
+    // Requires manually creating potentially invalid key images
+
+    let ring_size = 3;
+    let keypairs = generate_keypairs(ring_size, "compressed");
+    let ring_pubkeys_hex = get_public_keys(&keypairs);
+    let signer_kp = &keypairs[0];
+    let message = b"Message for KI validation";
+
+    // Create a valid signature and key image
+    let (signature, valid_ki_hex) =
+        sign_blsag_hex(message, &signer_kp.private_key_hex, &ring_pubkeys_hex)
+            .expect("Signing failed");
+    let valid_ki = KeyImage::from_hex(&valid_ki_hex).unwrap();
+
+    // 1. Verify with the valid key image (should pass)
+    assert!(verify_blsag_binary(
+        &BlsagSignatureBinary::try_from(&signature).unwrap(),
+        &valid_ki,
+        message,
+        &ring_pubkeys_hex
+            .iter()
+            .map(|s| hex_to_point(s))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    )
+    .unwrap());
+
+    // 2. Create an invalid key image (Identity point)
+    let identity_ki = KeyImage::from_point(ProjectivePoint::IDENTITY);
+    let verify_identity = verify_blsag_binary(
+        &BlsagSignatureBinary::try_from(&signature).unwrap(),
+        &identity_ki,
+        message,
+        &ring_pubkeys_hex
+            .iter()
+            .map(|s| hex_to_point(s))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap(),
+    );
+    // Verification should return Ok(false) because identity KI is invalid
+    assert!(verify_identity.is_ok());
+    assert!(
+        !verify_identity.unwrap(),
+        "Verification should fail with identity key image"
+    );
 }
