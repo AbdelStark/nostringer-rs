@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-nostr = { git = "https://github.com/rust-nostr/nostr", rev = "31180d7" }
+nostr = { version = "0.40.0" }
 k256 = { version = "0.13", features = ["arithmetic", "sha256"] }
 sha2 = "0.10"
 hex = "0.4"
