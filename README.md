@@ -19,11 +19,11 @@
       TS LIVE DEMO
     </a>
     <span> | </span>
-    <a href="https://github.com/AbdelStark/nostringer-rs">
-      RUST REPO
+    <a href="https://docs.rs/nostringer/latest/nostringer/">
+      RUST DOC
     </a>
     <span> | </span>
-    <a href="https://github.com/AbdelStark/nostringer-rs/tree/main/examples">
+    <a href="https://github.com/AbdelStark/nostringer-rs/tree/main/crates/nostringer/examples">
       EXAMPLES
     </a>
   </h3>
