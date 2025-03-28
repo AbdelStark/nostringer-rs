@@ -21,7 +21,7 @@ This roadmap outlines the planned development stages for the Rust implementation
 
 ### Testing & Compatibility
 
-- [ ] **E2E Cross-Compatibility Tests:** Finalize and automate robust end-to-end tests verifying signatures between this Rust library and the original TypeScript `nostringer` library for both SAG and bLSAG.
+- [ ] **E2E Cross-Compatibility Tests:** Finalize and automate robust end-to-end tests verifying signatures between this Rust library and various Nostr libraries.
 - [ ] **`rust-nostr` Key Compatibility:** Rigorously test that keys generated and managed by the `rust-nostr` crate (`Keys`, `PublicKey`, `SecretKey`) work seamlessly with `nostringer-ring`'s hex and binary APIs, covering different key formats (x-only, compressed).
 - [ ] **`rust-nostr` Event Signing Test:** Create examples/tests demonstrating signing the canonical serialization of `rust-nostr` `Event` JSON arrays using both SAG and bLSAG. Verify these signatures.
 - [ ] **Expand Unit Tests:** Add tests for edge cases (e.g., ring size limits, specific key values, invalid inputs) for both SAG and bLSAG.
@@ -46,7 +46,7 @@ This roadmap outlines the planned development stages for the Rust implementation
 ### Define Standard Signature Format
 
 - [ ] Research trade-offs (size, complexity, ecosystem compatibility) between CBOR+Base64URL, JSON+Base64, concatenated hex+Base64, etc.
-- [ ] Strongly consider the **Cashu NUT-00 V4 inspired format:**
+- [ ] Consider adopting a [Cashu like NUT-00 V4 tokens format](https://github.com/cashubtc/nuts/blob/main/00.md#v4-tokens)
   - Define concise CBOR representation for `BlsagSignature` + `KeyImage` (and `RingSignature`). Use byte strings for scalars, points, key image. Use short keys (e.g., `c`, `s`, `i`).
   - Implement `serde_cbor` serialization/deserialization.
   - Implement Base64 URL Safe encoding/decoding (using `base64` crate's `URL_SAFE_NO_PAD` engine).
