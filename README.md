@@ -39,9 +39,11 @@ Nostringer is largely inspired by [Monero's Ring Signatures](https://www.getmone
 
 - [Nostringer Ring Signatures (Rust)](#nostringer-ring-signatures-rust)
   - [Table of Contents](#table-of-contents)
-  - [Disclaimer](#disclaimer)
   - [Problem Statement](#problem-statement)
   - [Key Features](#key-features)
+  - [Signature Variants](#signature-variants)
+    - [SAG (Spontaneous Anonymous Group)](#sag-spontaneous-anonymous-group)
+    - [BLSAG (Back's Linkable Spontaneous Anonymous Group)](#blsag-backs-linkable-spontaneous-anonymous-group)
   - [Installation](#installation)
   - [Usage](#usage)
     - [Optimized Binary API](#optimized-binary-api)
@@ -49,28 +51,11 @@ Nostringer is largely inspired by [Monero's Ring Signatures](https://www.getmone
   - [Benchmarks](#benchmarks)
     - [Performance Results](#performance-results)
   - [API Reference](#api-reference)
-    - [`sign(message: &[u8], private_key_hex: &str, ring_pubkeys_hex: &[String]) -> Result<RingSignature, Error>`](#signmessage-u8-private_key_hex-str-ring_pubkeys_hex-string---resultringsignature-error)
-    - [`verify(signature: &RingSignature, message: &[u8], ring_pubkeys_hex: &[String]) -> Result<bool, Error>`](#verifysignature-ringsignature-message-u8-ring_pubkeys_hex-string---resultbool-error)
-    - [`sign_binary(message: &[u8], private_key: &Scalar, ring_pubkeys: &[ProjectivePoint]) -> Result<RingSignatureBinary, Error>`](#sign_binarymessage-u8-private_key-scalar-ring_pubkeys-projectivepoint---resultringsignaturebinary-error)
-    - [`verify_binary(signature: &RingSignatureBinary, message: &[u8], ring_pubkeys: &[ProjectivePoint]) -> Result<bool, Error>`](#verify_binarysignature-ringsignaturebinary-message-u8-ring_pubkeys-projectivepoint---resultbool-error)
-    - [`sign_with_hex(message: &[u8], private_key_hex: &str, ring_pubkeys_hex: &[String]) -> Result<RingSignature, Error>`](#sign_with_hexmessage-u8-private_key_hex-str-ring_pubkeys_hex-string---resultringsignature-error)
-    - [`verify_with_hex(signature: &RingSignature, message: &[u8], ring_pubkeys_hex: &[String]) -> Result<bool, Error>`](#verify_with_hexsignature-ringsignature-message-u8-ring_pubkeys_hex-string---resultbool-error)
-    - [`generate_keypair_hex(format: &str) -> KeyPairHex`](#generate_keypair_hexformat-str---keypairhex)
-    - [`RingSignature` Struct](#ringsignature-struct)
-    - [`RingSignatureBinary` Struct](#ringsignaturebinary-struct)
-    - [`KeyPairHex` Struct](#keypairhex-struct)
-    - [`KeyPair` Struct](#keypair-struct)
-    - [`Error` Enum](#error-enum)
   - [Signature Size](#signature-size)
   - [Security Considerations](#security-considerations)
+  - [Disclaimer](#disclaimer)
   - [License](#license)
   - [References](#references)
-
-## Disclaimer
-
-> **This code is highly experimental.**
-> The original author is not a cryptographer, and this Rust port, while aiming for compatibility and correctness using standard libraries, **has not been audited or formally verified.**
-> Use for educational exploration **at your own risk.** Production usage is **strongly discouraged** until thorough security reviews and testing are performed by qualified individuals.
 
 ## Problem Statement
 
@@ -84,14 +69,34 @@ A **ring signature** solves this by letting an individual sign a message _on beh
 - **Linkable Option**: The BLSAG variant provides linkability through key images to detect when the same key is used multiple times, while still preserving anonymity within the ring.
 - **Fast**: Implemented in Rust, leveraging efficient and audited cryptographic primitives from the RustCrypto ecosystem (`k256`, `sha2`).
 - **Optimized API**: Provides both hex-string based API and a more efficient binary API that avoids serialization/deserialization overhead.
-- **Nostr Key Compatibility**: Directly supports standard Nostr key formats (hex strings):
-  - 32-byte (64-hex) x-only public keys.
-  - 33-byte (66-hex) compressed public keys.
-  - 65-byte (130-hex) uncompressed public keys.
-  - 32-byte (64-hex) private keys.
-- **Easy to Use**: Simple `sign`, `verify`, and `generate_keypair_hex` functions.
+- **Nostr Key Compatibility**.
+- **Easy to Use**: Simple `sign`, `verify` functions.
 - **Minimal Dependencies**: Relies on well-maintained RustCrypto crates.
 - **No Trusted Setup**: The scheme does not require any special setup ceremony.
+
+## Signature Variants
+
+The library offers two main variants of ring signatures:
+
+### SAG (Spontaneous Anonymous Group)
+
+The default variant that provides:
+
+- Complete unlinkability (no way to tell if two signatures came from the same signer)
+- Maximum privacy within the ring
+- Suitable for anonymous voting, whistleblowing, or any scenario requiring maximum privacy
+
+### BLSAG (Back's Linkable Spontaneous Anonymous Group)
+
+A linkable variant that:
+
+- Produces a key image along with the signature to enable linkability
+- Can detect when the same key signs multiple times (via the key image)
+- Still doesn't reveal which specific ring member signed (preserves anonymity within the ring)
+- Suitable for preventing double-spending, duplicate voting, or tracking usage of a credential
+- Similar to the linkable ring signature scheme used in Monero
+
+Choose the variant that best suits your privacy and security requirements.
 
 ## Installation
 
@@ -258,173 +263,7 @@ Benchmarking Environment:
 
 ## API Reference
 
-### `sign(message: &[u8], private_key_hex: &str, ring_pubkeys_hex: &[String]) -> Result<RingSignature, Error>`
-
-Signs a message using the SAG-like ring signature scheme. This function is a wrapper around the more efficient `sign_binary` that handles hex conversion.
-
-- **`message`**: The message bytes (`&[u8]`) to sign.
-- **`private_key_hex`**: The signer's private key as a 64-character hex string.
-- **`ring_pubkeys_hex`**: A slice of public key hex strings representing the ring members. The signer's corresponding public key (or the key corresponding to the _negated_ private key) **must** be present in this ring. The order of keys matters for verification.
-- **Returns**: A `Result` containing the `RingSignature` on success, or an `Error` on failure (e.g., signer not in ring, invalid keys, ring too small).
-
-### `verify(signature: &RingSignature, message: &[u8], ring_pubkeys_hex: &[String]) -> Result<bool, Error>`
-
-Verifies a ring signature against a message and the ring of public keys. This function is a wrapper around the more efficient `verify_binary` that handles hex conversion.
-
-- **`signature`**: A reference to the `RingSignature` object (`{ c0, s }`).
-- **`message`**: The original message bytes (`&[u8]`) that were allegedly signed.
-- **`ring_pubkeys_hex`**: A slice of public key hex strings representing the ring. **Must** be identical (including order) to the ring used during signing.
-- **Returns**: A `Result` containing `true` if the signature is valid for the message and ring, or `false` if it's invalid. Returns an `Error` if inputs are malformed (e.g., wrong signature length, invalid hex).
-
-### `sign_binary(message: &[u8], private_key: &Scalar, ring_pubkeys: &[ProjectivePoint]) -> Result<RingSignatureBinary, Error>`
-
-Optimized version of sign that works directly with binary types, avoiding hex conversion overhead.
-
-- **`message`**: The message bytes (`&[u8]`) to sign.
-- **`private_key`**: The signer's private key as a `k256::Scalar`.
-- **`ring_pubkeys`**: A slice of public keys as `k256::ProjectivePoint` representing the ring members.
-- **Returns**: A `Result` containing the `RingSignatureBinary` on success, or an `Error` on failure.
-
-### `verify_binary(signature: &RingSignatureBinary, message: &[u8], ring_pubkeys: &[ProjectivePoint]) -> Result<bool, Error>`
-
-Optimized version of verify that works directly with binary types, avoiding hex conversion overhead.
-
-- **`signature`**: A reference to the `RingSignatureBinary` object.
-- **`message`**: The original message bytes (`&[u8]`) that were allegedly signed.
-- **`ring_pubkeys`**: A slice of public keys as `k256::ProjectivePoint` representing the ring.
-- **Returns**: A `Result` containing `true` if the signature is valid, or `false` if it's invalid.
-
-### `sign_with_hex(message: &[u8], private_key_hex: &str, ring_pubkeys_hex: &[String]) -> Result<RingSignature, Error>`
-
-Alias for the original `sign` function, provided for clarity. Handles hex conversion internally.
-
-### `verify_with_hex(signature: &RingSignature, message: &[u8], ring_pubkeys_hex: &[String]) -> Result<bool, Error>`
-
-Alias for the original `verify` function, provided for clarity. Handles hex conversion internally.
-
-### `generate_keypair_hex(format: &str) -> KeyPairHex`
-
-Generates a new random secp256k1 key pair.
-
-- **`format`**: A string slice specifying the desired public key format:
-  - `"xonly"`: 64-hex (32 bytes), guaranteed even-Y point.
-  - `"compressed"`: 66-hex (33 bytes), starts with `02` or `03`.
-  - `"uncompressed"`: 130-hex (65 bytes), starts with `04`.
-  - Defaults to `"compressed"` if an unrecognized format is provided.
-- **Returns**: A `KeyPairHex` struct containing `private_key_hex` (String) and `public_key_hex` (String).
-  _Note: The returned `private_key_hex` is the original randomly generated scalar, even if internal negation was required to produce an even-Y public key for the `"xonly"` format._
-
-### `RingSignature` Struct
-
-```rust
-pub struct RingSignature {
-  pub c0: String, // Initial challenge scalar (64-char hex)
-  pub s: Vec<String>, // Array of response scalars (64-char hex strings)
-}
-```
-
-### `RingSignatureBinary` Struct
-
-```rust
-pub struct RingSignatureBinary {
-  pub c0: Scalar, // Initial challenge scalar in binary form
-  pub s: Vec<Scalar>, // Array of response scalars in binary form
-}
-```
-
-### `BlsagSignature` Struct
-
-```rust
-pub struct BlsagSignature {
-  pub c0: String, // Initial challenge scalar (64-char hex)
-  pub s: Vec<String>, // Array of response scalars (64-char hex strings)
-}
-```
-
-### `BlsagSignatureBinary` Struct
-
-```rust
-pub struct BlsagSignatureBinary {
-  pub c0: Scalar, // Initial challenge scalar in binary form
-  pub s: Vec<Scalar>, // Array of response scalars in binary form
-}
-```
-
-### `KeyImage` Struct
-
-```rust
-pub struct KeyImage(pub ProjectivePoint);
-```
-
-A struct representing a key image for linkable signatures. Key images uniquely identify the signer's private key without revealing it. Provided with methods to convert to/from hex strings and compare for equality.
-
-### `KeyPairHex` Struct
-
-```rust
-pub struct KeyPairHex {
-  pub private_key_hex: String, // 64-char hex
-  pub public_key_hex: String,  // Hex format depends on generation option
-}
-```
-
-### `KeyPair` Struct
-
-```rust
-pub struct KeyPair {
-  pub private_key: Scalar,
-  pub public_key: ProjectivePoint,
-}
-```
-
-### `Error` Enum
-
-An enum representing possible errors during signing or verification, such as invalid key formats, signer not found in the ring, ring too small, hex decoding errors, or internal cryptographic errors.
-
-### `sign_blsag_binary(message: &[u8], private_key: &Scalar, ring_pubkeys: &[ProjectivePoint]) -> Result<(BlsagSignatureBinary, KeyImage), Error>`
-
-Creates a BLSAG (linkable) signature using binary inputs.
-
-- **`message`**: The message bytes (`&[u8]`) to sign.
-- **`private_key`**: The signer's private key as a `k256::Scalar`.
-- **`ring_pubkeys`**: A slice of public keys as `k256::ProjectivePoint` representing the ring members.
-- **Returns**: A `Result` containing a tuple of `(BlsagSignatureBinary, KeyImage)` on success, or an `Error` on failure. The KeyImage can be used to detect when the same key is used for multiple signatures.
-
-### `verify_blsag_binary(signature: &BlsagSignatureBinary, key_image: &KeyImage, message: &[u8], ring_pubkeys: &[ProjectivePoint]) -> Result<bool, Error>`
-
-Verifies a BLSAG (linkable) signature using binary inputs.
-
-- **`signature`**: The binary BLSAG signature to verify.
-- **`key_image`**: The key image associated with the signature.
-- **`message`**: The message bytes that were allegedly signed.
-- **`ring_pubkeys`**: A slice of public keys as `k256::ProjectivePoint` representing the ring.
-- **Returns**: A `Result` containing `true` if the signature is valid, or `false` if it's invalid.
-
-### `sign_blsag_hex(message: &[u8], private_key_hex: &str, ring_pubkeys_hex: &[String]) -> Result<(BlsagSignature, String), Error>`
-
-Creates a BLSAG (linkable) signature using hex inputs.
-
-- **`message`**: The message bytes (`&[u8]`) to sign.
-- **`private_key_hex`**: The signer's private key as a 64-character hex string.
-- **`ring_pubkeys_hex`**: A slice of public key hex strings representing the ring.
-- **Returns**: A `Result` containing a tuple of `(BlsagSignature, String)` on success, or an `Error` on failure. The second element is the key image as a hex string.
-
-### `verify_blsag_hex(signature_hex: &BlsagSignature, key_image_hex: &str, message: &[u8], ring_pubkeys_hex: &[String]) -> Result<bool, Error>`
-
-Verifies a BLSAG (linkable) signature using hex inputs.
-
-- **`signature_hex`**: The hex BLSAG signature to verify.
-- **`key_image_hex`**: The key image hex string associated with the signature.
-- **`message`**: The message bytes that were allegedly signed.
-- **`ring_pubkeys_hex`**: A slice of public key hex strings representing the ring.
-- **Returns**: A `Result` containing `true` if the signature is valid, or `false` if it's invalid.
-
-### `key_images_match(image1: &KeyImage, image2: &KeyImage) -> bool`
-
-Compares two key images to determine if they were created by the same signer.
-
-- **`image1`**: The first key image to compare.
-- **`image2`**: The second key image to compare.
-- **Returns**: `true` if the key images match (same signer), `false` otherwise.
+Check the [Rust API Docs](https://docs.rs/nostringer/latest/nostringer/) for detailed API reference and usage examples.
 
 ## Signature Size
 
@@ -447,29 +286,11 @@ This means the signature size grows **linearly** with the ring size. A larger ri
   - **BLSAG**: The BLSAG variant intentionally provides linkability through key images. These key images allow detecting when the same key signed multiple messages, while still preserving anonymity (not revealing which specific ring member is the signer).
 - **Implementation Security**: This library relies on the correctness of the underlying `k256` crate. While `k256` is well-regarded, this specific ring signature implementation has **not** been independently audited.
 
-## Signature Variants
+## Disclaimer
 
-The library offers two main variants of ring signatures:
-
-### 1. SAG (Spontaneous Anonymous Group)
-
-The default variant that provides:
-
-- Complete unlinkability (no way to tell if two signatures came from the same signer)
-- Maximum privacy within the ring
-- Suitable for anonymous voting, whistleblowing, or any scenario requiring maximum privacy
-
-### 2. BLSAG (Back's Linkable Spontaneous Anonymous Group)
-
-A linkable variant that:
-
-- Produces a key image along with the signature to enable linkability
-- Can detect when the same key signs multiple times (via the key image)
-- Still doesn't reveal which specific ring member signed (preserves anonymity within the ring)
-- Suitable for preventing double-spending, duplicate voting, or tracking usage of a credential
-- Similar to the linkable ring signature scheme used in Monero
-
-Choose the variant that best suits your privacy and security requirements.
+> **This code is highly experimental.**
+> The original author is not a cryptographer, and this Rust port, while aiming for compatibility and correctness using standard libraries, **has not been audited or formally verified.**
+> Use for educational exploration **at your own risk.** Production usage is **strongly discouraged** until thorough security reviews and testing are performed by qualified individuals.
 
 ## License
 
