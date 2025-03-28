@@ -49,6 +49,7 @@ Nostringer is largely inspired by [Monero's Ring Signatures](https://www.getmone
   - [Installation](#installation)
   - [Usage](#usage)
     - [Optimized Binary API](#optimized-binary-api)
+    - [WebAssembly Usage](#webassembly-usage)
   - [Examples](#examples)
   - [Benchmarks](#benchmarks)
     - [Performance Results](#performance-results)
@@ -71,8 +72,13 @@ A **ring signature** solves this by letting an individual sign a message _on beh
 - **Linkable Option**: The BLSAG variant provides linkability through key images to detect when the same key is used multiple times, while still preserving anonymity within the ring.
 - **Fast**: Implemented in Rust, leveraging efficient and audited cryptographic primitives from the RustCrypto ecosystem (`k256`, `sha2`).
 - **Optimized API**: Provides both hex-string based API and a more efficient binary API that avoids serialization/deserialization overhead.
-- **Nostr Key Compatibility**.
-- **Easy to Use**: Simple `sign`, `verify` functions.
+- **WebAssembly Support**: Use the library directly in web browsers and other WASM environments.
+- **Nostr Key Compatibility**: Directly supports standard Nostr key formats (hex strings):
+  - 32-byte (64-hex) x-only public keys.
+  - 33-byte (66-hex) compressed public keys.
+  - 65-byte (130-hex) uncompressed public keys.
+  - 32-byte (64-hex) private keys.
+- **Easy to Use**: Simple `sign`, `verify`, and `generate_keypair_hex` functions.
 - **Minimal Dependencies**: Relies on well-maintained RustCrypto crates.
 - **No Trusted Setup**: The scheme does not require any special setup ceremony.
 
@@ -241,6 +247,68 @@ fn main() -> Result<(), Error> {
 }
 ```
 
+### WebAssembly Usage
+
+Nostringer can be compiled to WebAssembly, allowing you to use it directly in web browsers and other WASM environments:
+
+```javascript
+// Import the WASM module
+import init, {
+  wasm_generate_keypair,
+  wasm_sign,
+  wasm_verify,
+  wasm_sign_blsag,
+  wasm_verify_blsag,
+  wasm_key_images_match
+} from './nostringer.js';
+
+// Initialize the WASM module
+async function main() {
+  await init();
+  
+  // Generate keypairs for the ring
+  const keypair1 = wasm_generate_keypair("xonly");
+  const keypair2 = wasm_generate_keypair("xonly");
+  const keypair3 = wasm_generate_keypair("xonly");
+  
+  const ringPubkeys = [
+    keypair1.public_key_hex(),
+    keypair2.public_key_hex(),
+    keypair3.public_key_hex()
+  ];
+  
+  // Sign a message with one of the keys
+  const message = new TextEncoder().encode("This is a secret message to the group.");
+  const signature = wasm_sign(message, keypair2.private_key_hex(), ringPubkeys);
+  
+  // Verify the signature
+  const isValid = wasm_verify(signature, message, ringPubkeys);
+  console.log("Signature valid:", isValid);
+}
+
+main();
+```
+
+#### Building for WASM
+
+To compile Nostringer for WebAssembly:
+
+```bash
+# Install wasm-pack if you don't have it
+cargo install wasm-pack
+
+# Build the WASM module
+wasm-pack build --target web --features wasm
+
+# For bundlers like webpack
+wasm-pack build --target bundler --features wasm
+
+# For Node.js
+wasm-pack build --target nodejs --features wasm
+```
+
+See the [WebAssembly example](https://github.com/AbdelStark/nostringer-rs/tree/main/crates/nostringer/examples/web/basic_wasm) for a complete demonstration of using Nostringer in a web browser.
+
 ## Examples
 
 The repository includes several examples that demonstrate different aspects of the library:
@@ -267,6 +335,17 @@ The repository includes several examples that demonstrate different aspects of t
 
    ```bash
    cargo run --example error_handling
+   ```
+
+5. **WebAssembly** (`examples/web/basic_wasm`): A web-based example showing how to use the library in a browser via WebAssembly.
+
+   ```bash
+   # Build the WASM module
+   wasm-pack build crates/nostringer --target web --out-dir examples/web/basic_wasm/pkg --features wasm
+   
+   # Serve the example (using Python's built-in server)
+   cd crates/nostringer/examples/web/basic_wasm
+   python -m http.server
    ```
 
 These examples provide practical demonstrations of how to use the library in real-world scenarios and handle various edge cases.

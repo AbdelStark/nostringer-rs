@@ -98,6 +98,8 @@
 
 pub mod types;
 pub mod utils;
+#[cfg(feature = "wasm")]
+pub mod wasm;
 
 use k256::elliptic_curve::{ops::Reduce, point::AffineCoordinates, sec1::ToEncodedPoint, Group};
 use k256::{NonZeroScalar, ProjectivePoint, PublicKey, Scalar, SecretKey, U256};

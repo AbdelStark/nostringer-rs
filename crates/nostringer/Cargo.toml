@@ -19,14 +19,29 @@ sha2 = { workspace = true }
 subtle = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true, optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+getrandom = { version = "0.2", features = ["js"], optional = true }
+js-sys = { version = "0.3", optional = true }
+console_error_panic_hook = { version = "0.1.7", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.4", features = ["html_reports"] }
 colored = "2.0"
+wasm-bindgen-test = { version = "0.3", optional = true }
 
 [features]
 default = []
 serde = ["dep:serde"]
+wasm = [
+    "dep:wasm-bindgen",
+    "dep:getrandom",
+    "dep:js-sys",
+    "dep:console_error_panic_hook",
+    "dep:wasm-bindgen-test",
+]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
 
 [[bench]]
 name = "ring_signatures"

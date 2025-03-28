@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nostringer WASM Demo</title>
+    <style>
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+        line-height: 1.6;
+      }
+      h1 {
+        color: #4a4a4a;
+        text-align: center;
+        margin-bottom: 30px;
+      }
+      .section {
+        margin-bottom: 30px;
+        padding: 20px;
+        border-radius: 8px;
+        background-color: #f9f9f9;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+      button {
+        background-color: #4caf50;
+        color: white;
+        padding: 10px 15px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-right: 10px;
+        margin-bottom: 10px;
+      }
+      button:hover {
+        background-color: #45a049;
+      }
+      pre {
+        background-color: #f1f1f1;
+        padding: 10px;
+        border-radius: 4px;
+        overflow-x: auto;
+        white-space: pre-wrap;
+      }
+      .container {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+      #tabs {
+        display: flex;
+        margin-bottom: 20px;
+      }
+      .tab {
+        padding: 10px 20px;
+        background-color: #e0e0e0;
+        cursor: pointer;
+        border-radius: 4px 4px 0 0;
+      }
+      .tab.active {
+        background-color: #4caf50;
+        color: white;
+      }
+      .tab-content {
+        display: none;
+      }
+      .tab-content.active {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Nostringer Ring Signatures in WebAssembly</h1>
+
+    <div id="tabs">
+      <div class="tab active" onclick="switchTab('sag')">SAG (Unlinkable)</div>
+      <div class="tab" onclick="switchTab('blsag')">BLSAG (Linkable)</div>
+    </div>
+
+    <div class="container">
+      <div id="sag" class="tab-content active">
+        <div class="section">
+          <h2>SAG Ring Signatures</h2>
+          <p>
+            Standard ring signatures provide anonymity within a group without
+            linkability.
+          </p>
+          <button id="generate-keys">1. Generate Keys for Ring</button>
+          <button id="sign-message" disabled>2. Sign Message</button>
+          <button id="verify-signature" disabled>3. Verify Signature</button>
+          <button id="tamper-message" disabled>4. Tamper & Verify</button>
+          <pre id="sag-output">Click "Generate Keys for Ring" to start...</pre>
+        </div>
+      </div>
+
+      <div id="blsag" class="tab-content">
+        <div class="section">
+          <h2>BLSAG Linkable Ring Signatures</h2>
+          <p>
+            Linkable ring signatures allow detecting when the same key signs
+            multiple messages while maintaining anonymity.
+          </p>
+          <button id="blsag-generate-keys">1. Generate Keys for Ring</button>
+          <button id="blsag-sign-message1" disabled>
+            2. Sign First Message
+          </button>
+          <button id="blsag-sign-message2" disabled>
+            3. Sign Second Message
+          </button>
+          <button id="blsag-check-linkability" disabled>
+            4. Check Linkability
+          </button>
+          <pre id="blsag-output">
+Click "Generate Keys for Ring" to start...</pre
+          >
+        </div>
+      </div>
+    </div>
+
+    <script type="module">
+      // Import the WASM module
+      import init, {
+        wasm_generate_keypair,
+        wasm_sign,
+        wasm_verify,
+        wasm_sign_blsag,
+        wasm_verify_blsag,
+        wasm_key_images_match,
+      } from "./pkg/nostringer.js";
+
+      // Initialize WASM module and set up event listeners
+      async function initWasm() {
+        try {
+          await init();
+          console.log("WASM module initialized");
+          setupEventListeners();
+        } catch (error) {
+          console.error("Failed to initialize WASM module:", error);
+          document.getElementById("sag-output").textContent =
+            "Error initializing WASM module: " + error.message;
+          document.getElementById("blsag-output").textContent =
+            "Error initializing WASM module: " + error.message;
+        }
+      }
+
+      // Global state for SAG demo
+      const state = {
+        keypairs: [],
+        ringPubkeys: [],
+        signature: null,
+        message: "This is a secret message for the ring.",
+      };
+
+      // Global state for BLSAG demo
+      const blsagState = {
+        keypairs: [],
+        ringPubkeys: [],
+        signatures: [],
+        keyImages: [],
+        messages: [
+          "First message: Approve the proposal.",
+          "Second message: Transfer the funds.",
+        ],
+      };
+
+      function setupEventListeners() {
+        // SAG Demo buttons
+        document
+          .getElementById("generate-keys")
+          .addEventListener("click", generateKeys);
+        document
+          .getElementById("sign-message")
+          .addEventListener("click", signMessage);
+        document
+          .getElementById("verify-signature")
+          .addEventListener("click", verifySignature);
+        document
+          .getElementById("tamper-message")
+          .addEventListener("click", tamperAndVerify);
+
+        // BLSAG Demo buttons
+        document
+          .getElementById("blsag-generate-keys")
+          .addEventListener("click", blsagGenerateKeys);
+        document
+          .getElementById("blsag-sign-message1")
+          .addEventListener("click", () => blsagSignMessage(0));
+        document
+          .getElementById("blsag-sign-message2")
+          .addEventListener("click", () => blsagSignMessage(1));
+        document
+          .getElementById("blsag-check-linkability")
+          .addEventListener("click", blsagCheckLinkability);
+      }
+
+      // SAG Functions
+      function generateKeys() {
+        try {
+          const output = document.getElementById("sag-output");
+          output.textContent = "Generating keys for the ring...\n";
+
+          // Generate 3 keypairs for the ring
+          state.keypairs = [];
+          for (let i = 0; i < 3; i++) {
+            const format = "xonly";
+            const keypair = wasm_generate_keypair(format);
+            state.keypairs.push({
+              privateKeyHex: keypair.private_key_hex(),
+              publicKeyHex: keypair.public_key_hex(),
+            });
+          }
+
+          // Prepare ring of public keys
+          state.ringPubkeys = state.keypairs.map((kp) => kp.publicKeyHex);
+
+          // Display the generated keys
+          output.textContent += "Generated 3 keypairs:\n";
+          state.keypairs.forEach((kp, i) => {
+            output.textContent += `\nRing Member ${i + 1}:\n`;
+            output.textContent += `Private Key: ${kp.privateKeyHex.substring(
+              0,
+              10
+            )}...${kp.privateKeyHex.substring(kp.privateKeyHex.length - 10)}\n`;
+            output.textContent += `Public Key: ${kp.publicKeyHex.substring(
+              0,
+              10
+            )}...${kp.publicKeyHex.substring(kp.publicKeyHex.length - 10)}\n`;
+          });
+
+          output.textContent +=
+            '\nRing is ready for signing. Click "Sign Message" to continue.';
+          document.getElementById("sign-message").disabled = false;
+        } catch (error) {
+          document.getElementById("sag-output").textContent =
+            "Error generating keys: " + error.message;
+        }
+      }
+
+      function signMessage() {
+        try {
+          const output = document.getElementById("sag-output");
+          output.textContent =
+            "Signing message with Ring Member 2's private key...\n";
+          output.textContent += `Message: "${state.message}"\n\n`;
+
+          // Sign the message with the second keypair's private key
+          const signerIndex = 1; // Use the second keypair (0-based index)
+          const signerPrivateKey = state.keypairs[signerIndex].privateKeyHex;
+          const encoder = new TextEncoder();
+          const messageBytes = encoder.encode(state.message);
+
+          state.signature = wasm_sign(
+            messageBytes,
+            signerPrivateKey,
+            state.ringPubkeys
+          );
+
+          // Display the signature
+          output.textContent += "Generated Ring Signature:\n";
+          output.textContent += `c0: ${state.signature
+            .c0()
+            .substring(0, 10)}...${state.signature
+            .c0()
+            .substring(state.signature.c0().length - 10)}\n`;
+          output.textContent += `s values: [${
+            state.signature.s().length
+          } scalars]\n`;
+
+          output.textContent +=
+            '\nClick "Verify Signature" to verify it against the ring.';
+          document.getElementById("verify-signature").disabled = false;
+        } catch (error) {
+          document.getElementById("sag-output").textContent =
+            "Error signing message: " + error.message;
+        }
+      }
+
+      function verifySignature() {
+        try {
+          const output = document.getElementById("sag-output");
+          output.textContent = "Verifying signature against the ring...\n";
+          output.textContent += `Message: "${state.message}"\n\n`;
+
+          // Verify the signature
+          const encoder = new TextEncoder();
+          const messageBytes = encoder.encode(state.message);
+          const isValid = wasm_verify(
+            state.signature,
+            messageBytes,
+            state.ringPubkeys
+          );
+
+          // Display the result
+          output.textContent += `Verification result: ${
+            isValid ? "VALID ✓" : "INVALID ✗"
+          }\n`;
+          output.textContent +=
+            "\nThe signature proves that someone in the ring signed this message,";
+          output.textContent +=
+            "\nbut it doesn't reveal which specific member.";
+
+          output.textContent +=
+            '\n\nClick "Tamper & Verify" to see what happens if the message is modified.';
+          document.getElementById("tamper-message").disabled = false;
+        } catch (error) {
+          document.getElementById("sag-output").textContent =
+            "Error verifying signature: " + error.message;
+        }
+      }
+
+      function tamperAndVerify() {
+        try {
+          const output = document.getElementById("sag-output");
+          const tamperedMessage = state.message + " [TAMPERED]";
+          output.textContent = "Verifying signature with tampered message...\n";
+          output.textContent += `Original message: "${state.message}"\n`;
+          output.textContent += `Tampered message: "${tamperedMessage}"\n\n`;
+
+          // Verify with tampered message
+          const encoder = new TextEncoder();
+          const tamperedBytes = encoder.encode(tamperedMessage);
+          const isValid = wasm_verify(
+            state.signature,
+            tamperedBytes,
+            state.ringPubkeys
+          );
+
+          // Display the result
+          output.textContent += `Verification result: ${
+            isValid ? "VALID ✓" : "INVALID ✗"
+          }\n`;
+          output.textContent +=
+            "\nThe signature is invalid for the tampered message.";
+          output.textContent +=
+            "\nThis proves that the signature is bound to the original message.";
+
+          output.textContent +=
+            "\n\nDemo complete! Try the BLSAG tab for linkable signatures.";
+        } catch (error) {
+          document.getElementById("sag-output").textContent =
+            "Error in tamper verification: " + error.message;
+        }
+      }
+
+      // BLSAG Functions
+      function blsagGenerateKeys() {
+        try {
+          const output = document.getElementById("blsag-output");
+          output.textContent = "Generating keys for the BLSAG ring...\n";
+
+          // Generate 4 keypairs for the ring
+          blsagState.keypairs = [];
+          for (let i = 0; i < 4; i++) {
+            const format = "xonly";
+            const keypair = wasm_generate_keypair(format);
+            blsagState.keypairs.push({
+              privateKeyHex: keypair.private_key_hex(),
+              publicKeyHex: keypair.public_key_hex(),
+            });
+          }
+
+          // Prepare ring of public keys
+          blsagState.ringPubkeys = blsagState.keypairs.map(
+            (kp) => kp.publicKeyHex
+          );
+
+          // Display the generated keys
+          output.textContent += "Generated 4 keypairs:\n";
+          blsagState.keypairs.forEach((kp, i) => {
+            output.textContent += `\nRing Member ${i + 1}:\n`;
+            output.textContent += `Public Key: ${kp.publicKeyHex.substring(
+              0,
+              10
+            )}...${kp.publicKeyHex.substring(kp.publicKeyHex.length - 10)}\n`;
+          });
+
+          output.textContent +=
+            '\nRing is ready for signing. Click "Sign First Message" to continue.';
+          document.getElementById("blsag-sign-message1").disabled = false;
+        } catch (error) {
+          document.getElementById("blsag-output").textContent =
+            "Error generating BLSAG keys: " + error.message;
+        }
+      }
+
+      function blsagSignMessage(messageIndex) {
+        try {
+          const output = document.getElementById("blsag-output");
+          output.textContent = `Signing message ${
+            messageIndex + 1
+          } with Ring Member 2's private key...\n`;
+          output.textContent += `Message: "${blsagState.messages[messageIndex]}"\n\n`;
+
+          // Sign the message with the second keypair's private key
+          const signerIndex = 1; // Use the second keypair (0-based index)
+          const signerPrivateKey =
+            blsagState.keypairs[signerIndex].privateKeyHex;
+          const encoder = new TextEncoder();
+          const messageBytes = encoder.encode(
+            blsagState.messages[messageIndex]
+          );
+
+          const result = wasm_sign_blsag(
+            messageBytes,
+            signerPrivateKey,
+            blsagState.ringPubkeys
+          );
+          blsagState.signatures[messageIndex] = result;
+          blsagState.keyImages[messageIndex] = result.key_image();
+
+          // Display the signature
+          output.textContent += "Generated BLSAG Signature:\n";
+          output.textContent += `c0: ${result.c0().substring(0, 10)}...${result
+            .c0()
+            .substring(result.c0().length - 10)}\n`;
+          output.textContent += `Key Image: ${result
+            .key_image()
+            .substring(0, 10)}...${result
+            .key_image()
+            .substring(result.key_image().length - 10)}\n`;
+
+          // Verify immediately
+          const isValid = wasm_verify_blsag(
+            result,
+            messageBytes,
+            blsagState.ringPubkeys
+          );
+          output.textContent += `\nVerification result: ${
+            isValid ? "VALID ✓" : "INVALID ✗"
+          }\n`;
+
+          // Enable the next button based on which message was signed
+          if (messageIndex === 0) {
+            document.getElementById("blsag-sign-message2").disabled = false;
+            output.textContent +=
+              '\nClick "Sign Second Message" to sign another message with the same key.';
+          } else {
+            document.getElementById("blsag-check-linkability").disabled = false;
+            output.textContent +=
+              '\nClick "Check Linkability" to compare the key images.';
+          }
+        } catch (error) {
+          document.getElementById("blsag-output").textContent =
+            "Error signing BLSAG message: " + error.message;
+        }
+      }
+
+      function blsagCheckLinkability() {
+        try {
+          const output = document.getElementById("blsag-output");
+          output.textContent =
+            "Checking linkability between the two signatures...\n\n";
+
+          // Compare key images
+          const keyImage1 = blsagState.keyImages[0];
+          const keyImage2 = blsagState.keyImages[1];
+
+          output.textContent += `Key Image 1: ${keyImage1.substring(
+            0,
+            10
+          )}...${keyImage1.substring(keyImage1.length - 10)}\n`;
+          output.textContent += `Key Image 2: ${keyImage2.substring(
+            0,
+            10
+          )}...${keyImage2.substring(keyImage2.length - 10)}\n\n`;
+
+          const match = wasm_key_images_match(keyImage1, keyImage2);
+
+          output.textContent += `Key images match: ${
+            match ? "YES ✓" : "NO ✗"
+          }\n\n`;
+          output.textContent += "Explanation:\n";
+          output.textContent +=
+            "- In BLSAG, each signer produces a unique key image derived from their private key\n";
+          output.textContent +=
+            "- This key image is the same for all signatures by the same key\n";
+          output.textContent +=
+            "- We can detect that both messages were signed by the same ring member\n";
+          output.textContent +=
+            "- Yet we still don't know which specific ring member signed\n\n";
+          output.textContent +=
+            "This linkability feature is useful for preventing double-voting,\n";
+          output.textContent +=
+            "double-spending, or other scenarios where we need to detect repeated\n";
+          output.textContent +=
+            "participation while still preserving anonymity within the group.";
+        } catch (error) {
+          document.getElementById("blsag-output").textContent =
+            "Error checking linkability: " + error.message;
+        }
+      }
+
+      function switchTab(tabName) {
+        // Hide all tab contents
+        document.querySelectorAll(".tab-content").forEach((tab) => {
+          tab.classList.remove("active");
+        });
+
+        // Show the selected tab content
+        document.getElementById(tabName).classList.add("active");
+
+        // Update the tab buttons
+        document.querySelectorAll(".tab").forEach((tab) => {
+          tab.classList.remove("active");
+        });
+
+        // Find the clicked tab button by its onclick attribute
+        document
+          .querySelector(`.tab[onclick="switchTab('${tabName}')"]`)
+          .classList.add("active");
+      }
+
+      // Initialize the WASM module
+      initWasm();
+    </script>
+  </body>
+</html>
