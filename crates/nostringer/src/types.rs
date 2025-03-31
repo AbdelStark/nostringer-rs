@@ -8,6 +8,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils::hex_to_point;
 
+/// Defines the type of ring signature to create
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignatureVariant {
+    /// Standard Spontaneous Anonymous Group (SAG) signature
+    /// Provides unlinkability (no way to tell if two signatures came from the same signer)
+    Sag,
+
+    /// Back's Linkable Spontaneous Anonymous Group (BLSAG) signature
+    /// Produces a key image that allows detecting when the same key signs multiple times
+    /// Still preserves anonymity (doesn't reveal which specific ring member is the signer)
+    Blsag,
+}
+
 /// Errors that can occur during ring signature operations
 #[derive(Error, Debug, PartialEq)]
 pub enum Error {

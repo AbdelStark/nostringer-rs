@@ -7,10 +7,8 @@ use colored::Colorize;
 use nostringer::{
     blsag::{key_images_match, sign_blsag_hex, verify_blsag_hex},
     generate_keypair_hex, generate_keypairs, get_public_keys,
-    sag::{sign, verify},
-    sign_compact_blsag, sign_compact_sag,
-    types::{KeyImage, KeyPairHex, RingSignature},
-    verify_compact, CompactSignature,
+    types::{KeyImage, KeyPairHex, SignatureVariant},
+    CompactSignature,
 };
 
 /// Command-line interface for the nostringer ring signature library
@@ -49,7 +47,11 @@ enum Commands {
         #[arg(short, long)]
         ring: String,
 
-        /// Optional: File path to save the signature to (as JSON)
+        /// Optional: Signature variant to use (sag or blsag, default: sag)
+        #[arg(short, long, default_value = "sag")]
+        variant: String,
+
+        /// Optional: File path to save the signature to
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
@@ -60,13 +62,9 @@ enum Commands {
         #[arg(short, long)]
         message: String,
 
-        /// The c0 value from the signature
-        #[arg(long)]
-        c0: String,
-
-        /// Comma-separated list of s values from the signature
+        /// The compact signature (ringA... format)
         #[arg(short, long)]
-        s_values: String,
+        signature: String,
 
         /// A comma-separated list of public keys in the ring
         #[arg(short, long)]
@@ -105,16 +103,46 @@ fn main() -> Result<()> {
             message,
             private_key,
             ring,
+            variant,
             output,
         } => {
             let ring_pubkeys = parse_keys_list(ring)?;
-            let signature = sign(message.as_bytes(), private_key, &ring_pubkeys)
-                .context("Failed to create signature")?;
 
-            display_signature(&signature, message, &ring_pubkeys);
+            // Parse the signature variant
+            let sig_variant = match variant.to_lowercase().as_str() {
+                "sag" => SignatureVariant::Sag,
+                "blsag" => SignatureVariant::Blsag,
+                _ => {
+                    return Err(anyhow!(
+                        "Invalid signature variant: {}. Use 'sag' or 'blsag'.",
+                        variant
+                    ))
+                }
+            };
+
+            println!("Signing with {} variant...", variant.to_uppercase());
+            let compact_signature =
+                nostringer::sign(message.as_bytes(), private_key, &ring_pubkeys, sig_variant)
+                    .context("Failed to create signature")?;
+
+            println!("\n{}", "Compact Signature (ringA format):".bold());
+            println!("{}", compact_signature.bright_magenta());
+
+            // Verify the signature
+            let is_valid =
+                nostringer::verify(&compact_signature, message.as_bytes(), &ring_pubkeys)
+                    .context("Failed to verify signature")?;
+
+            if is_valid {
+                println!("\n{} {}", "✓".green().bold(), "Signature is valid!".green());
+            } else {
+                println!("\n{} {}", "✗".red().bold(), "Signature is invalid!".red());
+            }
 
             if let Some(output_path) = output {
-                save_signature(&signature, output_path)?;
+                fs::write(output_path, compact_signature.as_bytes()).with_context(|| {
+                    format!("Failed to write signature to {}", output_path.display())
+                })?;
                 println!(
                     "\n{} Signature saved to {}",
                     "✓".green().bold(),
@@ -125,24 +153,33 @@ fn main() -> Result<()> {
 
         Commands::Verify {
             message,
-            c0,
-            s_values,
+            signature,
             ring,
         } => {
             let ring_pubkeys = parse_keys_list(ring)?;
-            let s_values = parse_keys_list(s_values)?;
-            let signature = RingSignature {
-                c0: c0.clone(),
-                s: s_values,
-            };
 
-            let is_valid = verify(&signature, message.as_bytes(), &ring_pubkeys)
+            println!("Verifying signature: {}", signature.bright_magenta());
+
+            let is_valid = nostringer::verify(signature, message.as_bytes(), &ring_pubkeys)
                 .context("Failed to verify signature")?;
 
             if is_valid {
                 println!("\n{} {}", "✓".green().bold(), "Signature is valid!".green());
             } else {
                 println!("\n{} {}", "✗".red().bold(), "Signature is invalid!".red());
+            }
+
+            // Try to get the signature variant for informational purposes
+            match CompactSignature::deserialize(signature) {
+                Ok(compact_sig) => {
+                    println!(
+                        "Signature variant: {}",
+                        compact_sig.variant().to_uppercase().cyan()
+                    );
+                }
+                Err(_) => {
+                    println!("Could not determine signature variant");
+                }
             }
         }
 
@@ -209,20 +246,21 @@ fn run_demo() -> Result<()> {
     );
     println!("Selected signer: Ring Member 2");
 
-    let signature = sign(message.as_bytes(), &keypair2.private_key_hex, &ring_pubkeys)
-        .context("Failed to create signature")?;
+    let compact_signature = nostringer::sign(
+        message.as_bytes(),
+        &keypair2.private_key_hex,
+        &ring_pubkeys,
+        SignatureVariant::Sag,
+    )
+    .context("Failed to create signature")?;
 
-    println!("\nGenerated Signature:");
-    println!("  c0: {}", signature.c0.bright_magenta());
-    println!("  s values:");
-    for (i, s) in signature.s.iter().enumerate() {
-        println!("    [{}]: {}", i, s.bright_magenta());
-    }
+    println!("\nGenerated Compact Signature (ringA format):");
+    println!("{}", compact_signature.bright_magenta());
 
     println!("\n{}", "4. Verifying the signature...".bold());
     println!("Can we verify who signed it? No, just that it was someone in the ring.");
 
-    let is_valid = verify(&signature, message.as_bytes(), &ring_pubkeys)
+    let is_valid = nostringer::verify(&compact_signature, message.as_bytes(), &ring_pubkeys)
         .context("Failed to verify signature")?;
 
     if is_valid {
@@ -245,8 +283,12 @@ fn run_demo() -> Result<()> {
     let tampered_message = "This is a tampered message that wasn't signed.";
     println!("Tampered message: {}", tampered_message.red());
 
-    let is_tampered_valid = verify(&signature, tampered_message.as_bytes(), &ring_pubkeys)
-        .context("Failed to verify tampered signature")?;
+    let is_tampered_valid = nostringer::verify(
+        &compact_signature,
+        tampered_message.as_bytes(),
+        &ring_pubkeys,
+    )
+    .context("Failed to verify tampered signature")?;
 
     if !is_tampered_valid {
         println!(
@@ -277,10 +319,11 @@ fn run_demo() -> Result<()> {
         "\n{}",
         "6. Signing the message with the compromised ring...".bold()
     );
-    let compromised_signature = sign(
+    let compromised_signature = nostringer::sign(
         message.as_bytes(),
         &non_ring_member_keypair.private_key_hex,
         &compromised_ring,
+        SignatureVariant::Sag,
     )
     .context("Failed to create compromised signature")?;
 
@@ -288,7 +331,8 @@ fn run_demo() -> Result<()> {
         "\n{}",
         "7. Verifying the signature with the original ring (should fail)".bold()
     );
-    let error_thrown = verify(&compromised_signature, message.as_bytes(), &ring_pubkeys).is_err();
+    let error_thrown =
+        nostringer::verify(&compromised_signature, message.as_bytes(), &ring_pubkeys).is_err();
 
     if error_thrown {
         println!(
@@ -519,23 +563,6 @@ fn display_keypair(keypair: &KeyPairHex) {
     println!("  Public Key:  {}", keypair.public_key_hex.cyan());
 }
 
-fn display_signature(signature: &RingSignature, message: &str, ring: &[String]) {
-    println!("\n{}", "Message:".bold());
-    println!("  {}", message.green());
-
-    println!("\n{}", "Ring Members:".bold());
-    for (i, key) in ring.iter().enumerate() {
-        println!("  [{}]: {}", i, key.cyan());
-    }
-
-    println!("\n{}", "Generated Signature:".bold());
-    println!("  c0: {}", signature.c0.bright_magenta());
-    println!("  s values:");
-    for (i, s) in signature.s.iter().enumerate() {
-        println!("    [{}]: {}", i, s.bright_magenta());
-    }
-}
-
 fn save_keypair(keypair: &KeyPairHex, path: &Path) -> Result<()> {
     let json = serde_json::json!({
         "private_key": keypair.private_key_hex,
@@ -543,17 +570,6 @@ fn save_keypair(keypair: &KeyPairHex, path: &Path) -> Result<()> {
     });
     let content =
         serde_json::to_string_pretty(&json).context("Failed to serialize keypair to JSON")?;
-    fs::write(path, content).with_context(|| format!("Failed to write to {}", path.display()))?;
-    Ok(())
-}
-
-fn save_signature(signature: &RingSignature, path: &Path) -> Result<()> {
-    let json = serde_json::json!({
-        "c0": signature.c0,
-        "s": signature.s,
-    });
-    let content =
-        serde_json::to_string_pretty(&json).context("Failed to serialize signature to JSON")?;
     fs::write(path, content).with_context(|| format!("Failed to write to {}", path.display()))?;
     Ok(())
 }
@@ -603,7 +619,7 @@ fn run_compact_sign_demo() -> Result<()> {
 
     println!("Signing with Ring Member 2's private key...");
     let compact_sig_sag =
-        sign_compact_sag(message.as_bytes(), &keypair2.private_key_hex, &ring_pubkeys)
+        nostringer::sign_compact_sag(message.as_bytes(), &keypair2.private_key_hex, &ring_pubkeys)
             .context("Failed to create SAG compact signature")?;
 
     println!("\nCompact SAG signature (ringA format):");
@@ -611,7 +627,7 @@ fn run_compact_sign_demo() -> Result<()> {
 
     // Verify the signature
     println!("\n{}", "3. Verifying the SAG compact signature...".bold());
-    let is_valid = verify_compact(&compact_sig_sag, message.as_bytes(), &ring_pubkeys)
+    let is_valid = nostringer::verify_compact(&compact_sig_sag, message.as_bytes(), &ring_pubkeys)
         .context("Failed to verify SAG compact signature")?;
 
     if is_valid {
@@ -636,7 +652,7 @@ fn run_compact_sign_demo() -> Result<()> {
     );
 
     let is_tampered_valid =
-        verify_compact(&compact_sig_sag, tampered_message.as_bytes(), &ring_pubkeys)
+        nostringer::verify_compact(&compact_sig_sag, tampered_message.as_bytes(), &ring_pubkeys)
             .context("Failed to verify tampered SAG compact signature")?;
 
     if !is_tampered_valid {
@@ -662,7 +678,7 @@ fn run_compact_sign_demo() -> Result<()> {
     println!("Message: {}", message2.green());
 
     println!("Signing with Ring Member 2's private key (same signer)...");
-    let compact_sig_blsag = sign_compact_blsag(
+    let compact_sig_blsag = nostringer::sign_compact_blsag(
         message2.as_bytes(),
         &keypair2.private_key_hex,
         &ring_pubkeys,
@@ -674,8 +690,9 @@ fn run_compact_sign_demo() -> Result<()> {
 
     // Verify the BLSAG signature
     println!("\n{}", "5. Verifying the BLSAG compact signature...".bold());
-    let is_valid_blsag = verify_compact(&compact_sig_blsag, message2.as_bytes(), &ring_pubkeys)
-        .context("Failed to verify BLSAG compact signature")?;
+    let is_valid_blsag =
+        nostringer::verify_compact(&compact_sig_blsag, message2.as_bytes(), &ring_pubkeys)
+            .context("Failed to verify BLSAG compact signature")?;
 
     if is_valid_blsag {
         println!(

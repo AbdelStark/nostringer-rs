@@ -53,7 +53,8 @@ Nostringer is largely inspired by [Monero's Ring Signatures](https://www.getmone
   - [SAG vs. bLSAG Trade-offs](#sag-vs-blsag-trade-offs)
   - [Installation](#installation)
   - [Usage](#usage)
-    - [Optimized Binary API](#optimized-binary-api)
+    - [Using Different Signature Variants](#using-different-signature-variants)
+    - [Low-Level Binary API](#low-level-binary-api)
     - [WebAssembly Usage](#webassembly-usage)
       - [Building for WASM](#building-for-wasm)
   - [Examples](#examples)
@@ -78,17 +79,19 @@ Check [ROADMAP.md](ROADMAP.md) for the detailed project roadmap, including compl
 
 ## Key Features
 
-- **Unlinkable**: Signatures hide the signer's identity. Two signatures from the same signer cannot be linked cryptographically.
+- **Simplified API**: Top-level `sign` and `verify` functions with compact format signatures for easier use.
+- **Variant Selection**: Choose between SAG (unlinkable) and BLSAG (linkable) signature variants with a simple enum.
+- **Compact Signatures**: All signatures use the space-efficient "ringA..." format, which includes version and variant information.
+- **Unlinkable**: SAG signatures hide the signer's identity. Two signatures from the same signer cannot be linked cryptographically.
 - **Linkable Option**: The BLSAG variant provides linkability through key images to detect when the same key is used multiple times, while still preserving anonymity within the ring.
 - **Fast**: Implemented in Rust, leveraging efficient and audited cryptographic primitives from the RustCrypto ecosystem (`k256`, `sha2`).
-- **Optimized API**: Provides both hex-string based API and a more efficient binary API that avoids serialization/deserialization overhead.
+- **Optimized API**: Provides both high-level API and a more efficient low-level binary API that avoids serialization overhead.
 - **WebAssembly Support**: Use the library directly in web browsers and other WASM environments.
 - **Nostr Key Compatibility**: Directly supports standard Nostr key formats (hex strings):
   - 32-byte (64-hex) x-only public keys.
   - 33-byte (66-hex) compressed public keys.
   - 65-byte (130-hex) uncompressed public keys.
   - 32-byte (64-hex) private keys.
-- **Easy to Use**: Simple `sign`, `verify`, and `generate_keypair_hex` functions.
 - **Minimal Dependencies**: Relies on well-maintained RustCrypto crates.
 - **No Trusted Setup**: The scheme does not require any special setup ceremony.
 
@@ -175,7 +178,7 @@ _(Note: You might need other crates like `hex` or `rand` in your own project dep
 ## Usage
 
 ```rust
-use nostringer::{sign, verify, generate_keypair_hex, RingSignature, Error};
+use nostringer::{sign, verify, SignatureVariant, generate_keypair_hex, Error};
 
 fn main() -> Result<(), Error> {
     // 1. Setup: Generate keys for the ring members
@@ -195,15 +198,18 @@ fn main() -> Result<(), Error> {
 
     // 3. Signer (keypair2) signs the message using their private key
     println!("Signing message...");
+    
+    // Use the top-level API with compact signature format
+    // Choose the signature variant: SignatureVariant::Sag (unlinkable) or SignatureVariant::Blsag (linkable)
     let signature = sign(
         message,
-        &keypair2.private_key_hex, // Signer's private key hex
-        &ring_pubkeys_hex,         // The full ring of public keys
+        &keypair2.private_key_hex,        // Signer's private key hex
+        &ring_pubkeys_hex,                // The full ring of public keys
+        SignatureVariant::Sag             // Use SAG variant (unlinkable)
     )?;
 
-    println!("Generated Signature:");
-    println!(" c0: {}", signature.c0);
-    println!(" s: {:?}", signature.s);
+    println!("Generated Compact Signature: {}", signature);
+    // Output is a compact "ringA..." format string
 
     // 4. Verification: Anyone can verify the signature against the ring and message
     println!("\nVerifying signature...");
@@ -231,12 +237,53 @@ fn main() -> Result<(), Error> {
 }
 ```
 
-### Optimized Binary API
+### Using Different Signature Variants
 
-For applications requiring maximum performance, we provide a binary API that works directly with the native types, avoiding hex conversion overhead:
+The library provides two signature variants that you can select using the `SignatureVariant` enum:
 
 ```rust
-use nostringer::{sign_binary, verify_binary, KeyPair, RingSignatureBinary, Error};
+use nostringer::{sign, verify, SignatureVariant, generate_keypair_hex, Error};
+
+fn main() -> Result<(), Error> {
+    // Setup: Generate keys for the ring
+    let keypair1 = generate_keypair_hex("xonly");
+    let keypair2 = generate_keypair_hex("xonly");
+    let ring = vec![keypair1.public_key_hex.clone(), keypair2.public_key_hex.clone()];
+    let message = b"This is a message for the ring.";
+    
+    // SAG variant (unlinkable - default)
+    // No way to tell if two signatures came from the same signer
+    let sag_signature = sign(
+        message,
+        &keypair1.private_key_hex,
+        &ring,
+        SignatureVariant::Sag // Use the SAG variant
+    )?;
+    
+    // BLSAG variant (linkable)
+    // Same key produces the same key image, allowing detection of repeat signers
+    let blsag_signature = sign(
+        message,
+        &keypair1.private_key_hex,
+        &ring,
+        SignatureVariant::Blsag // Use the BLSAG variant
+    )?;
+    
+    // Verify both types of signatures using the same verify function
+    // The signature format automatically determines which verification algorithm to use
+    assert!(verify(&sag_signature, message, &ring)?);
+    assert!(verify(&blsag_signature, message, &ring)?);
+    
+    Ok(())
+}
+```
+
+### Low-Level Binary API
+
+For applications requiring maximum performance, we also provide lower-level binary APIs that work directly with the native types, avoiding hex conversion overhead:
+
+```rust
+use nostringer::{sag, blsag, types::Error};
 use k256::{Scalar, ProjectivePoint};
 
 fn main() -> Result<(), Error> {
@@ -246,11 +293,11 @@ fn main() -> Result<(), Error> {
     let ring_pubkeys = /* Vec<ProjectivePoint> */;
     let message = b"This is a secret message to the group.";
 
-    // Sign using binary API (more efficient)
-    let binary_signature = sign_binary(message, &private_key, &ring_pubkeys)?;
+    // Sign using binary SAG API (more efficient)
+    let binary_signature = sag::sign_binary(message, &private_key, &ring_pubkeys, rand::rngs::OsRng)?;
 
-    // Verify using binary API (more efficient)
-    let is_valid = verify_binary(&binary_signature, message, &ring_pubkeys)?;
+    // Verify using binary SAG API (more efficient)
+    let is_valid = sag::verify_binary(&binary_signature, message, &ring_pubkeys)?;
     println!("Signature valid: {}", is_valid);
 
     Ok(())

@@ -1,8 +1,4 @@
-use nostringer::{
-    generate_keypair_hex,
-    sag::{sign, verify},
-    types::Error,
-};
+use nostringer::{generate_keypair_hex, sign, types::Error, verify, SignatureVariant};
 
 fn main() -> Result<(), Error> {
     // Generate three keypairs for our example
@@ -29,29 +25,48 @@ fn main() -> Result<(), Error> {
         String::from_utf8_lossy(message)
     );
 
-    // Sign the message using keypair2's private key
-    println!("\nSigning message using keypair2...");
-    let signature = sign(message, &keypair2.private_key_hex, &ring_pubkeys_hex)?;
+    // Sign the message using keypair2's private key with SAG variant
+    println!("\nSigning message using keypair2 (using SAG variant)...");
+    let compact_signature = sign(
+        message,
+        &keypair2.private_key_hex,
+        &ring_pubkeys_hex,
+        SignatureVariant::Sag,
+    )?;
 
-    // Print the signature
-    println!("\nGenerated signature:");
-    println!("c0: {}", signature.c0);
-    println!("s values:");
-    for (i, s) in signature.s.iter().enumerate() {
-        println!("  s[{}]: {}", i, s);
-    }
+    // Print the compact signature
+    println!("\nGenerated compact signature:");
+    println!("{}", compact_signature);
 
     // Verify the signature
     println!("\nVerifying signature...");
-    let is_valid = verify(&signature, message, &ring_pubkeys_hex)?;
+    let is_valid = verify(&compact_signature, message, &ring_pubkeys_hex)?;
 
     println!("Signature valid: {}", is_valid);
     assert!(is_valid);
 
+    // Create a BLSAG signature for comparison
+    println!("\nCreating a BLSAG signature for comparison...");
+    let blsag_signature = sign(
+        message,
+        &keypair2.private_key_hex,
+        &ring_pubkeys_hex,
+        SignatureVariant::Blsag,
+    )?;
+
+    println!("BLSAG signature:");
+    println!("{}", blsag_signature);
+
+    // Verify the BLSAG signature
+    println!("\nVerifying BLSAG signature...");
+    let is_blsag_valid = verify(&blsag_signature, message, &ring_pubkeys_hex)?;
+    println!("BLSAG signature valid: {}", is_blsag_valid);
+    assert!(is_blsag_valid);
+
     // Try to verify with a different message
     let different_message = b"This is a different message that wasn't signed.";
     println!("\nVerifying with a different message...");
-    let is_different_valid = verify(&signature, different_message, &ring_pubkeys_hex)?;
+    let is_different_valid = verify(&compact_signature, different_message, &ring_pubkeys_hex)?;
 
     println!(
         "Different message signature valid: {} (expected: false)",

@@ -19,8 +19,7 @@
 //! ## Usage
 //!
 //! ```rust
-//! use nostringer::{sag, types::KeyPairHex, keys::generate_keypair_hex};
-//! use std::collections::HashMap; // Example, not needed for basic usage
+//! use nostringer::{sign, verify, SignatureVariant, types::KeyPairHex, keys::generate_keypair_hex};
 //!
 //! fn main() -> Result<(), nostringer::types::Error> {
 //!     // 1. Setup: Generate keys for the ring members
@@ -37,19 +36,18 @@
 //!     // 2. Define the message to be signed
 //!     let message = b"This is a secret message to the group.";
 //!
-//!     // 3. Signer (keypair2) signs the message using SAG
-//!     let signature = sag::sign(
+//!     // 3. Signer (keypair2) signs the message using the default SAG signature variant
+//!     let signature = sign(
 //!         message,
 //!         &keypair2.private_key_hex,
 //!         &ring_pubkeys_hex,
+//!         SignatureVariant::Sag,
 //!     )?;
 //!
-//!     println!("Generated SAG Signature:");
-//!     println!(" c0: {}", signature.c0);
-//!     println!(" s: {:?}", signature.s);
+//!     println!("Generated Compact Signature: {}", signature);
 //!
 //!     // 4. Verification: Anyone can verify the signature against the ring
-//!     let is_valid = sag::verify(
+//!     let is_valid = verify(
 //!         &signature,
 //!         message,
 //!         &ring_pubkeys_hex,
@@ -72,13 +70,13 @@ pub mod utils;
 pub mod wasm;
 
 // Re-export core types for convenience
-pub use types::{Error, KeyPair, KeyPairHex, RingSignature, RingSignatureBinary};
+pub use types::{Error, KeyPair, KeyPairHex, RingSignature, RingSignatureBinary, SignatureVariant};
 
 // Re-export serialization types and functions
 pub use serialization::{CompactSignature, SerializationError};
 
-pub use types::hex_to_scalar; // Re-export hex_to_scalar
-                              // Re-export key-related functions
+pub use types::hex_to_scalar;
+
 pub use keys::{generate_keypair_hex, generate_keypairs, get_public_keys};
 
 // Add a conversion from SerializationError to Error
@@ -88,7 +86,111 @@ impl From<SerializationError> for Error {
     }
 }
 
-// --- New Top-Level Compact API ---
+/// Signs a message with a ring signature in compact format.
+///
+/// This is the main signing function that creates a compact, serialized ring signature.
+/// By default, it uses the SAG variant, but you can specify BLSAG for linkable signatures.
+///
+/// # Arguments
+/// * `message` - The message to sign as a byte array
+/// * `private_key_hex` - The signer's private key as a hex string
+/// * `ring_pubkeys_hex` - The public keys of all ring members (including the signer) as hex strings
+/// * `variant` - The signature variant to use (SAG or BLSAG)
+///
+/// # Returns
+/// * `Ok(String)` - The compact serialized signature string (ringA... format)
+/// * `Err(Error)` - If signing or serialization fails
+///
+/// # Example
+///
+/// ```
+/// use nostringer::{sign, verify, SignatureVariant, generate_keypair_hex};
+///
+/// // Setup: Generate keys and create a ring
+/// let keypair1 = generate_keypair_hex("xonly");
+/// let keypair2 = generate_keypair_hex("xonly");
+/// let ring = vec![keypair1.public_key_hex.clone(), keypair2.public_key_hex.clone()];
+///
+/// // Sign with SAG (default, unlinkable)
+/// let message = b"This is a secret message";
+/// let signature = sign(message, &keypair1.private_key_hex, &ring, SignatureVariant::Sag)?;
+///
+/// // Verify
+/// let is_valid = verify(&signature, message, &ring)?;
+/// assert!(is_valid);
+/// # Ok::<(), nostringer::Error>(())
+/// ```
+pub fn sign(
+    message: &[u8],
+    private_key_hex: &str,
+    ring_pubkeys_hex: &[String],
+    variant: SignatureVariant,
+) -> Result<String, Error> {
+    match variant {
+        SignatureVariant::Sag => sign_compact_sag(message, private_key_hex, ring_pubkeys_hex),
+        SignatureVariant::Blsag => sign_compact_blsag(message, private_key_hex, ring_pubkeys_hex),
+    }
+}
+
+/// Verifies a compact ring signature.
+///
+/// This function automatically detects whether the signature is SAG or BLSAG
+/// based on the compact signature format, and verifies it accordingly.
+///
+/// # Arguments
+/// * `compact_signature` - The compact signature string (ringA... format)
+/// * `message` - The message that was supposedly signed
+/// * `ring_pubkeys_hex` - The public keys of all ring members as hex strings
+///
+/// # Returns
+/// * `Ok(bool)` - Whether the signature is valid for the given message and ring
+/// * `Err(Error)` - If verification fails due to invalid format or other errors
+///
+/// # Example
+///
+/// ```
+/// use nostringer::{sign, verify, SignatureVariant, generate_keypair_hex};
+///
+/// // Setup: Generate keys and create a ring
+/// let keypair1 = generate_keypair_hex("xonly");
+/// let keypair2 = generate_keypair_hex("xonly");
+/// let ring = vec![keypair1.public_key_hex.clone(), keypair2.public_key_hex.clone()];
+///
+/// // Sign a message
+/// let message = b"This is a secret message";
+/// let signature = sign(message, &keypair1.private_key_hex, &ring, SignatureVariant::Sag)?;
+///
+/// // Verify the signature
+/// let is_valid = verify(&signature, message, &ring)?;
+/// assert!(is_valid);
+/// # Ok::<(), nostringer::Error>(())
+/// ```
+pub fn verify(
+    compact_signature: &str,
+    message: &[u8],
+    ring_pubkeys_hex: &[String],
+) -> Result<bool, Error> {
+    // Deserialize the compact signature string
+    let compact_sig = CompactSignature::deserialize(compact_signature)
+        .map_err(|e| Error::Serialization(e.to_string()))?;
+
+    // Convert hex pubkeys to binary points
+    let ring_pubkeys: Vec<k256::ProjectivePoint> = ring_pubkeys_hex
+        .iter()
+        .map(|pubkey_str| utils::hex_to_point(pubkey_str))
+        .collect::<Result<_, _>>()?;
+
+    // Call the appropriate binary verification function
+    match compact_sig {
+        CompactSignature::Sag(binary_sig) => {
+            sag::verify_binary(&binary_sig, message, &ring_pubkeys)
+        }
+        CompactSignature::Blsag(binary_sig, key_image) => {
+            // For BLSAG, we need the key image from the deserialized data
+            blsag::verify_blsag_binary(&binary_sig, &key_image, message, &ring_pubkeys)
+        }
+    }
+}
 
 /// Creates a compact, serialized SAG ring signature (`ringA...` format).
 ///
@@ -176,24 +278,5 @@ pub fn verify_compact(
     message: &[u8],
     ring_pubkeys_hex: &[String],
 ) -> Result<bool, Error> {
-    // Deserialize the compact signature string
-    let compact_sig = CompactSignature::deserialize(compact_signature)
-        .map_err(|e| Error::Serialization(e.to_string()))?;
-
-    // Convert hex pubkeys to binary points
-    let ring_pubkeys: Vec<k256::ProjectivePoint> = ring_pubkeys_hex
-        .iter()
-        .map(|pubkey_str| utils::hex_to_point(pubkey_str))
-        .collect::<Result<_, _>>()?;
-
-    // Call the appropriate binary verification function
-    match compact_sig {
-        CompactSignature::Sag(binary_sig) => {
-            sag::verify_binary(&binary_sig, message, &ring_pubkeys)
-        }
-        CompactSignature::Blsag(binary_sig, key_image) => {
-            // For BLSAG, we need the key image from the deserialized data
-            blsag::verify_blsag_binary(&binary_sig, &key_image, message, &ring_pubkeys)
-        }
-    }
+    verify(compact_signature, message, ring_pubkeys_hex)
 }
