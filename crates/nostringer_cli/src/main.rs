@@ -9,6 +9,7 @@ use nostringer::{
     generate_keypair_hex, generate_keypairs, get_public_keys,
     sag::{sign, verify},
     types::{KeyImage, KeyPairHex, RingSignature},
+    CompactSignature, sign_compact_sag, sign_compact_blsag, verify_compact,
 };
 
 /// Command-line interface for the nostringer ring signature library
@@ -76,6 +77,9 @@ enum Commands {
 
     /// Run a demo of the linkable bLSAG ring signature variant
     BlsagDemo,
+    
+    /// Run a demo of compact signature format (both SAG and BLSAG)
+    CompactSignDemo,
 }
 
 fn main() -> Result<()> {
@@ -147,6 +151,10 @@ fn main() -> Result<()> {
 
         Commands::BlsagDemo => {
             run_blsag_demo()?;
+        }
+        
+        Commands::CompactSignDemo => {
+            run_compact_sign_demo()?;
         }
     }
 
@@ -546,6 +554,197 @@ fn save_signature(signature: &RingSignature, path: &Path) -> Result<()> {
     let content =
         serde_json::to_string_pretty(&json).context("Failed to serialize signature to JSON")?;
     fs::write(path, content).with_context(|| format!("Failed to write to {}", path.display()))?;
+    Ok(())
+}
+
+/// Run a demo of the compact signature format (ringA...) for both SAG and BLSAG
+fn run_compact_sign_demo() -> Result<()> {
+    println!(
+        "\n{}",
+        "=== NOSTRINGER COMPACT SIGNATURE DEMO ===".bold().green()
+    );
+    println!(
+        "{}",
+        "This demo demonstrates the compact signature format (ringA...) for both SAG and BLSAG variants."
+            .italic()
+    );
+
+    println!(
+        "\n{}",
+        "1. Generating keypairs for the ring members...".bold()
+    );
+    let keypair1 = generate_keypair_hex("xonly");
+    let keypair2 = generate_keypair_hex("xonly");
+    let keypair3 = generate_keypair_hex("xonly");
+
+    println!("Ring Member 1 (xonly):");
+    println!("  Public Key:  {}", keypair1.public_key_hex.cyan());
+
+    println!("\nRing Member 2 (xonly):");
+    println!("  Public Key:  {}", keypair2.public_key_hex.cyan());
+
+    println!("\nRing Member 3 (xonly):");
+    println!("  Public Key:  {}", keypair3.public_key_hex.cyan());
+
+    let ring_pubkeys = vec![
+        keypair1.public_key_hex.clone(),
+        keypair2.public_key_hex.clone(),
+        keypair3.public_key_hex.clone(),
+    ];
+
+    // ==========
+    // SAG COMPACT
+    // ==========
+
+    println!("\n{}", "2. Creating an SAG compact signature...".bold());
+    let message = "This is a message signed with SAG compact format.";
+    println!("Message: {}", message.green());
+
+    println!("Signing with Ring Member 2's private key...");
+    let compact_sig_sag = sign_compact_sag(
+        message.as_bytes(),
+        &keypair2.private_key_hex,
+        &ring_pubkeys,
+    )
+    .context("Failed to create SAG compact signature")?;
+
+    println!("\nCompact SAG signature (ringA format):");
+    println!("{}", compact_sig_sag.bright_magenta());
+
+    // Verify the signature
+    println!("\n{}", "3. Verifying the SAG compact signature...".bold());
+    let is_valid = verify_compact(&compact_sig_sag, message.as_bytes(), &ring_pubkeys)
+        .context("Failed to verify SAG compact signature")?;
+
+    if is_valid {
+        println!(
+            "{} {}",
+            "✓".green().bold(),
+            "SAG compact signature is valid!".green().bold()
+        );
+    } else {
+        println!(
+            "{} {}",
+            "✗".red().bold(),
+            "SAG compact signature is invalid!".red().bold()
+        );
+    }
+
+    // Test with a tampered message
+    let tampered_message = "This is a tampered message!";
+    println!("\nTesting with tampered message: {}", tampered_message.red());
+    
+    let is_tampered_valid = verify_compact(
+        &compact_sig_sag,
+        tampered_message.as_bytes(),
+        &ring_pubkeys,
+    )
+    .context("Failed to verify tampered SAG compact signature")?;
+
+    if !is_tampered_valid {
+        println!(
+            "{} {}",
+            "✓".green().bold(),
+            "Tampered message correctly rejected!".green().bold()
+        );
+    } else {
+        println!(
+            "{} {}",
+            "✗".red().bold(),
+            "Tampered message was incorrectly verified!".red().bold()
+        );
+    }
+
+    // ==========
+    // BLSAG COMPACT
+    // ==========
+
+    println!("\n{}", "4. Creating a BLSAG compact signature...".bold());
+    let message2 = "This is a message signed with BLSAG compact format.";
+    println!("Message: {}", message2.green());
+
+    println!("Signing with Ring Member 2's private key (same signer)...");
+    let compact_sig_blsag = sign_compact_blsag(
+        message2.as_bytes(),
+        &keypair2.private_key_hex,
+        &ring_pubkeys,
+    )
+    .context("Failed to create BLSAG compact signature")?;
+
+    println!("\nCompact BLSAG signature (ringA format):");
+    println!("{}", compact_sig_blsag.bright_magenta());
+
+    // Verify the BLSAG signature
+    println!("\n{}", "5. Verifying the BLSAG compact signature...".bold());
+    let is_valid_blsag = verify_compact(
+        &compact_sig_blsag,
+        message2.as_bytes(),
+        &ring_pubkeys,
+    )
+    .context("Failed to verify BLSAG compact signature")?;
+
+    if is_valid_blsag {
+        println!(
+            "{} {}",
+            "✓".green().bold(),
+            "BLSAG compact signature is valid!".green().bold()
+        );
+    } else {
+        println!(
+            "{} {}",
+            "✗".red().bold(),
+            "BLSAG compact signature is invalid!".red().bold()
+        );
+    }
+
+    // ==========
+    // SIGNATURE ANALYSIS
+    // ==========
+    
+    println!("\n{}", "6. Analyzing compact signatures...".bold());
+    println!("Deserializing signatures to examine their contents...");
+    
+    // Use nostringer functions to deserialize
+    let deserialized_sag = CompactSignature::deserialize(&compact_sig_sag)
+        .map_err(|e| anyhow!("Deserialization error: {}", e))?;
+    
+    let deserialized_blsag = CompactSignature::deserialize(&compact_sig_blsag)
+        .map_err(|e| anyhow!("Deserialization error: {}", e))?;
+    
+    println!("\nSAG signature variant: {}", deserialized_sag.variant().cyan());
+    println!("BLSAG signature variant: {}", deserialized_blsag.variant().cyan());
+    
+    // Show size difference
+    println!("\nSignature size comparison:");
+    println!("SAG size: {} bytes", compact_sig_sag.len());
+    println!("BLSAG size: {} bytes", compact_sig_blsag.len());
+    println!("Size difference: {} bytes", compact_sig_blsag.len() - compact_sig_sag.len());
+    
+    // ==========
+    // EXPLANATION
+    // ==========
+    
+    println!("\n{}", "ABOUT COMPACT SIGNATURES:".bold().yellow());
+    println!("1. The 'ringA...' format is a compact representation using:");
+    println!("   - CBOR binary serialization (smaller than JSON)");
+    println!("   - Base64url encoding (URL-safe, no padding)");
+    println!("   - Internal binary representation (not hex strings)");
+    
+    println!("\n2. Benefits of compact format:");
+    println!("   - Significantly smaller signature size");
+    println!("   - Better for transmission over networks");
+    println!("   - Single, unified verification function");
+    println!("   - Self-contained (includes signature variant)");
+    
+    println!("\n3. Format details:");
+    println!("   - Prefix: 'ringA' identifies the format and version");
+    println!("   - Payload: Base64url-encoded CBOR data containing:");
+    println!("     * Signature variant (sag/blsag)");
+    println!("     * c0 challenge value");
+    println!("     * Response scalars (s values)");
+    println!("     * Key image (for BLSAG only)");
+    
+    println!("\n{}", "=== COMPACT SIGNATURE DEMO COMPLETE ===".bold().green());
     Ok(())
 }
 
