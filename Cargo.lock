@@ -669,6 +669,7 @@ dependencies = [
  "colored",
  "hex",
  "nostringer 0.1.7 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rand",
  "serde_json",
 ]
 

@@ -6,9 +6,9 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 use nostringer::{
     blsag::{key_images_match, sign_blsag_hex, verify_blsag_hex},
-    generate_keypair_hex, generate_keypairs, get_public_keys,
-    types::{KeyImage, KeyPairHex, SignatureVariant},
-    CompactSignature,
+    generate_keypair_hex, generate_keypairs, get_public_keys, sag,
+    types::{KeyImage, KeyPairHex},
+    CompactSignature, SignatureVariant,
 };
 
 /// Command-line interface for the nostringer ring signature library
@@ -79,6 +79,9 @@ enum Commands {
 
     /// Run a demo of compact signature format (both SAG and BLSAG)
     CompactSignDemo,
+
+    /// Run a demo with a large ring of 100 members
+    BigRingDemo,
 }
 
 fn main() -> Result<()> {
@@ -193,6 +196,10 @@ fn main() -> Result<()> {
 
         Commands::CompactSignDemo => {
             run_compact_sign_demo()?;
+        }
+
+        Commands::BigRingDemo => {
+            run_big_ring_demo()?;
         }
     }
 
@@ -768,6 +775,246 @@ fn run_compact_sign_demo() -> Result<()> {
         "\n{}",
         "=== COMPACT SIGNATURE DEMO COMPLETE ===".bold().green()
     );
+    Ok(())
+}
+
+/// Run a demo with a large ring of 100 members
+fn run_big_ring_demo() -> Result<()> {
+    println!(
+        "\n{}",
+        "=== NOSTRINGER BIG RING DEMO (100 MEMBERS) ==="
+            .bold()
+            .green()
+    );
+    println!(
+        "{}",
+        "This demo will show how ring signatures perform with a large anonymity set.".italic()
+    );
+
+    // Start timing
+    let start_time = std::time::Instant::now();
+
+    println!(
+        "\n{}",
+        "1. Generating 100 keypairs for the ring members...".bold()
+    );
+
+    // Use the generate_keypairs helper function to create 100 keypairs
+    let keypairs = generate_keypairs(100, "xonly");
+    let ring_pubkeys = get_public_keys(&keypairs);
+
+    let generation_time = start_time.elapsed();
+    println!("Generated 100 keypairs in {:.2?}", generation_time);
+
+    // Pick a random signer from the ring (between 0 and 99)
+    let signer_index = rand::random::<usize>() % 100;
+    let signer_keypair = &keypairs[signer_index];
+
+    println!(
+        "\n{}",
+        "2. Selected a random ring member as the signer...".bold()
+    );
+    println!("Signer is member #{}", signer_index + 1);
+    println!(
+        "Public key (first 8 chars): {}",
+        &signer_keypair.public_key_hex[0..8]
+    );
+
+    println!("\n{}", "3. Creating a message to sign...".bold());
+    let message = "This is a message signed by one of 100 ring members.";
+    println!("Message: {}", message.green());
+
+    // Measure SAG signing time
+    println!(
+        "\n{}",
+        "4. Signing the message with SAG (unlinkable) signature...".bold()
+    );
+    let sag_start = std::time::Instant::now();
+
+    let sag_signature = sag::sign(
+        message.as_bytes(),
+        &signer_keypair.private_key_hex,
+        &ring_pubkeys,
+    )
+    .context("Failed to create SAG signature")?;
+
+    let sag_sign_time = sag_start.elapsed();
+    println!("SAG signing completed in {:.2?}", sag_sign_time);
+
+    // Measure SAG verification time
+    println!("\n{}", "5. Verifying the SAG signature...".bold());
+    let sag_verify_start = std::time::Instant::now();
+
+    let is_sag_valid = sag::verify(&sag_signature, message.as_bytes(), &ring_pubkeys)
+        .context("Failed to verify SAG signature")?;
+
+    let sag_verify_time = sag_verify_start.elapsed();
+    println!("SAG verification completed in {:.2?}", sag_verify_time);
+
+    if is_sag_valid {
+        println!(
+            "{} {}",
+            "✓".green().bold(),
+            "SAG Signature valid!".green().bold()
+        );
+    } else {
+        println!(
+            "{} {}",
+            "✗".red().bold(),
+            "SAG Signature invalid!".red().bold()
+        );
+    }
+
+    // Measure BLSAG signing time
+    println!(
+        "\n{}",
+        "6. Signing the message with BLSAG (linkable) signature...".bold()
+    );
+    let blsag_start = std::time::Instant::now();
+
+    let (blsag_signature, key_image) = sign_blsag_hex(
+        message.as_bytes(),
+        &signer_keypair.private_key_hex,
+        &ring_pubkeys,
+    )
+    .context("Failed to create BLSAG signature")?;
+
+    let blsag_sign_time = blsag_start.elapsed();
+    println!("BLSAG signing completed in {:.2?}", blsag_sign_time);
+
+    // Measure BLSAG verification time
+    println!("\n{}", "7. Verifying the BLSAG signature...".bold());
+    let blsag_verify_start = std::time::Instant::now();
+
+    let is_blsag_valid = verify_blsag_hex(
+        &blsag_signature,
+        &key_image,
+        message.as_bytes(),
+        &ring_pubkeys,
+    )
+    .context("Failed to verify BLSAG signature")?;
+
+    let blsag_verify_time = blsag_verify_start.elapsed();
+    println!("BLSAG verification completed in {:.2?}", blsag_verify_time);
+
+    if is_blsag_valid {
+        println!(
+            "{} {}",
+            "✓".green().bold(),
+            "BLSAG Signature valid!".green().bold()
+        );
+    } else {
+        println!(
+            "{} {}",
+            "✗".red().bold(),
+            "BLSAG Signature invalid!".red().bold()
+        );
+    }
+
+    // Measure compact signing time
+    println!("\n{}", "8. Signing with compact signature format...".bold());
+    let compact_start = std::time::Instant::now();
+
+    // Using compact signature API
+    let compact_sig = nostringer::sign_compact_sag(
+        message.as_bytes(),
+        &signer_keypair.private_key_hex,
+        &ring_pubkeys,
+    )
+    .context("Failed to create compact signature")?;
+
+    let compact_sign_time = compact_start.elapsed();
+    println!("Compact signing completed in {:.2?}", compact_sign_time);
+
+    // Measure compact verification time
+    println!("\n{}", "9. Verifying the compact signature...".bold());
+    let compact_verify_start = std::time::Instant::now();
+
+    let is_compact_valid =
+        nostringer::verify_compact(&compact_sig, message.as_bytes(), &ring_pubkeys)
+            .context("Failed to verify compact signature")?;
+
+    let compact_verify_time = compact_verify_start.elapsed();
+    println!(
+        "Compact verification completed in {:.2?}",
+        compact_verify_time
+    );
+
+    // Display the compact signature compact format
+    println!("\n{}", "Compact signature:".bold());
+    println!("{}", compact_sig.bright_magenta());
+
+    if is_compact_valid {
+        println!(
+            "{} {}",
+            "✓".green().bold(),
+            "Compact Signature valid!".green().bold()
+        );
+    } else {
+        println!(
+            "{} {}",
+            "✗".red().bold(),
+            "Compact Signature invalid!".red().bold()
+        );
+    }
+
+    // Signature sizes
+    println!("\n{}", "10. Analyzing signature sizes...".bold());
+    let sag_size = sag_signature.s.len() * 64 + sag_signature.c0.len();
+    let blsag_size = blsag_signature.s.len() * 64 + blsag_signature.c0.len() + key_image.len();
+    let compact_size = compact_sig.len();
+
+    println!("SAG signature size: {} bytes", sag_size);
+    println!("BLSAG signature size: {} bytes", blsag_size);
+    println!("Compact signature size: {} bytes", compact_size);
+
+    // Convert durations to milliseconds for consistent display
+    let sag_sign_ms = sag_sign_time.as_millis();
+    let sag_verify_ms = sag_verify_time.as_millis();
+    let blsag_sign_ms = blsag_sign_time.as_millis();
+    let blsag_verify_ms = blsag_verify_time.as_millis();
+    let compact_sign_ms = compact_sign_time.as_millis();
+    let compact_verify_ms = compact_verify_time.as_millis();
+
+    // Performance summary
+    println!("\n{}", "PERFORMANCE SUMMARY:".bold().yellow());
+    println!("┌─────────────┬────────────┬────────────┬────────────┐");
+    println!("│ Operation   │ Time (ms)  │ Size (bytes)│ vs SAG (%) │");
+    println!("├─────────────┼────────────┼────────────┼────────────┤");
+    println!(
+        "│ SAG Sign    │ {:<10} │ {:<10} │ {:<10} │",
+        sag_sign_ms, sag_size, "100%"
+    );
+    println!(
+        "│ SAG Verify  │ {:<10} │ {:<10} │ {:<10} │",
+        sag_verify_ms, "", "100%"
+    );
+
+    // Calculate percentage relative to SAG
+    let blsag_sign_percent = (blsag_sign_ms as f64 / sag_sign_ms as f64 * 100.0).round();
+    let blsag_verify_percent = (blsag_verify_ms as f64 / sag_verify_ms as f64 * 100.0).round();
+    let compact_sign_percent = (compact_sign_ms as f64 / sag_sign_ms as f64 * 100.0).round();
+    let compact_verify_percent = (compact_verify_ms as f64 / sag_verify_ms as f64 * 100.0).round();
+
+    println!(
+        "│ BLSAG Sign  │ {:<10} │ {:<10} │ {:<9.0}% │",
+        blsag_sign_ms, blsag_size, blsag_sign_percent
+    );
+    println!(
+        "│ BLSAG Verify│ {:<10} │ {:<10} │ {:<9.0}% │",
+        blsag_verify_ms, "", blsag_verify_percent
+    );
+    println!(
+        "│ Compact Sign│ {:<10} │ {:<10} │ {:<9.0}% │",
+        compact_sign_ms, compact_size, compact_sign_percent
+    );
+    println!(
+        "│ Compact Ver.│ {:<10} │ {:<10} │ {:<9.0}% │",
+        compact_verify_ms, "", compact_verify_percent
+    );
+    println!("└─────────────┴────────────┴────────────┴────────────┘");
+
+    println!("\n{}", "=== BIG RING DEMO COMPLETE ===".bold().green());
     Ok(())
 }
 
