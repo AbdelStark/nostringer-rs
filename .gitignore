@@ -19,5 +19,6 @@ target/
 # Added by cargo
 
 /target
+CLAUDE.md
 .cursor
 .cursorrules
