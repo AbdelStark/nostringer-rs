@@ -8,6 +8,10 @@ use crate::{
     blsag::{key_images_match, sign_blsag_hex, verify_blsag_hex},
     keys::generate_keypair_hex,
     sag::{sign, verify},
+    sign_compact_blsag,
+    sign_compact_sag,
+    verify_compact,
+    CompactSignature,
 };
 
 /// Set up panic hook for better error messages in WASM
@@ -293,4 +297,102 @@ pub fn wasm_key_images_match(image1: &str, image2: &str) -> Result<bool, JsValue
 
     // Compare key images
     Ok(key_images_match(&ki1, &ki2))
+}
+
+// --- Compact Signature API ---
+
+/// Sign a message using the compact SAG format, resulting in a 'ringA' prefixed string
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub fn wasm_sign_compact_sag(
+    message: &[u8],
+    private_key_hex: &str,
+    ring_pubkeys: Box<[JsValue]>,
+) -> Result<String, JsValue> {
+    // Convert JsValue array to Vec<String>
+    let ring_pubkeys_vec: Vec<String> = ring_pubkeys
+        .iter()
+        .map(|v| {
+            v.as_string()
+                .ok_or_else(|| JsValue::from_str("Invalid public key"))
+        })
+        .collect::<Result<Vec<String>, JsValue>>()?;
+
+    // Call the Rust compact signature function
+    sign_compact_sag(message, private_key_hex, &ring_pubkeys_vec)
+        .map_err(|e| JsValue::from_str(&format!("Error: {}", e)))
+}
+
+/// Sign a message using the compact BLSAG format, resulting in a 'ringA' prefixed string
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub fn wasm_sign_compact_blsag(
+    message: &[u8],
+    private_key_hex: &str,
+    ring_pubkeys: Box<[JsValue]>,
+) -> Result<String, JsValue> {
+    // Convert JsValue array to Vec<String>
+    let ring_pubkeys_vec: Vec<String> = ring_pubkeys
+        .iter()
+        .map(|v| {
+            v.as_string()
+                .ok_or_else(|| JsValue::from_str("Invalid public key"))
+        })
+        .collect::<Result<Vec<String>, JsValue>>()?;
+
+    // Call the Rust compact signature function
+    sign_compact_blsag(message, private_key_hex, &ring_pubkeys_vec)
+        .map_err(|e| JsValue::from_str(&format!("Error: {}", e)))
+}
+
+/// Verify a compact signature (both SAG and BLSAG types)
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub fn wasm_verify_compact(
+    compact_signature: &str,
+    message: &[u8],
+    ring_pubkeys: Box<[JsValue]>,
+) -> Result<bool, JsValue> {
+    // Convert JsValue array to Vec<String>
+    let ring_pubkeys_vec: Vec<String> = ring_pubkeys
+        .iter()
+        .map(|v| {
+            v.as_string()
+                .ok_or_else(|| JsValue::from_str("Invalid public key"))
+        })
+        .collect::<Result<Vec<String>, JsValue>>()?;
+
+    // Call the Rust verify function
+    verify_compact(compact_signature, message, &ring_pubkeys_vec)
+        .map_err(|e| JsValue::from_str(&format!("Error: {}", e)))
+}
+
+/// Get details about a compact signature (variant and size)
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub fn wasm_get_compact_signature_info(compact_signature: &str) -> Result<JsValue, JsValue> {
+    // Deserialize the compact signature
+    let compact_sig = CompactSignature::deserialize(compact_signature)
+        .map_err(|e| JsValue::from_str(&format!("Error: {}", e)))?;
+
+    // Extract info
+    let variant = compact_sig.variant();
+    let size = compact_signature.len();
+
+    // Create a JavaScript object with the info
+    let info = js_sys::Object::new();
+    js_sys::Reflect::set(
+        &info,
+        &JsValue::from_str("variant"),
+        &JsValue::from_str(variant),
+    )
+    .map_err(|_| JsValue::from_str("Failed to set variant"))?;
+    js_sys::Reflect::set(
+        &info,
+        &JsValue::from_str("size"),
+        &JsValue::from_f64(size as f64),
+    )
+    .map_err(|_| JsValue::from_str("Failed to set size"))?;
+
+    Ok(info.into())
 }

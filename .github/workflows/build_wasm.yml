@@ -1,0 +1,45 @@
+name: Build WASM
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-wasm:
+    name: Build WebAssembly package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          target: wasm32-unknown-unknown
+          override: true
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-wasm-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build with wasm-pack
+        run: wasm-pack build crates/nostringer --target web --out-dir examples/web/basic_wasm/pkg --features wasm
+
+      - name: Upload WASM artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: nostringer-wasm
+          path: crates/nostringer/examples/web/basic_wasm/pkg/
+          retention-days: 7

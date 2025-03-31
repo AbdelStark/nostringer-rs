@@ -77,6 +77,7 @@
     <div id="tabs">
       <div class="tab active" data-tab="sag">SAG (Unlinkable)</div>
       <div class="tab" data-tab="blsag">BLSAG (Linkable)</div>
+      <div class="tab" data-tab="compact">Compact Format</div>
     </div>
 
     <div class="container">
@@ -117,6 +118,30 @@ Click "Generate Keys for Ring" to start...</pre
           >
         </div>
       </div>
+
+      <div id="compact" class="tab-content">
+        <div class="section">
+          <h2>Compact Signature Format</h2>
+          <p>
+            The compact format uses CBOR encoding and base64url for efficient
+            transmission of signatures. Compare both formats to see the size
+            difference.
+          </p>
+          <button id="compact-generate-keys">1. Generate Keys for Ring</button>
+          <button id="compact-sign-sag" disabled>
+            2. Sign with SAG (Unlinkable)
+          </button>
+          <button id="compact-sign-blsag" disabled>
+            3. Sign with BLSAG (Linkable)
+          </button>
+          <button id="compact-compare-sizes" disabled>
+            4. Compare Formats
+          </button>
+          <pre id="compact-output">
+Click "Generate Keys for Ring" to start...</pre
+          >
+        </div>
+      </div>
     </div>
 
     <script type="module">
@@ -128,6 +153,10 @@ Click "Generate Keys for Ring" to start...</pre
         wasm_sign_blsag,
         wasm_verify_blsag,
         wasm_key_images_match,
+        wasm_sign_compact_sag,
+        wasm_sign_compact_blsag,
+        wasm_verify_compact,
+        wasm_get_compact_signature_info,
       } from "./pkg/nostringer.js";
 
       // Initialize WASM module and set up event listeners
@@ -141,6 +170,8 @@ Click "Generate Keys for Ring" to start...</pre
           document.getElementById("sag-output").textContent =
             "Error initializing WASM module: " + error.message;
           document.getElementById("blsag-output").textContent =
+            "Error initializing WASM module: " + error.message;
+          document.getElementById("compact-output").textContent =
             "Error initializing WASM module: " + error.message;
         }
       }
@@ -163,6 +194,23 @@ Click "Generate Keys for Ring" to start...</pre
           "First message: Approve the proposal.",
           "Second message: Transfer the funds.",
         ],
+      };
+
+      // Global state for Compact demo
+      const compactState = {
+        keypairs: [],
+        ringPubkeys: [],
+        message: "This message will be signed with different formats.",
+        signatures: {
+          sag: {
+            hex: null,
+            compact: null,
+          },
+          blsag: {
+            hex: null,
+            compact: null,
+          },
+        },
       };
 
       function setupEventListeners() {
@@ -193,6 +241,20 @@ Click "Generate Keys for Ring" to start...</pre
         document
           .getElementById("blsag-check-linkability")
           .addEventListener("click", blsagCheckLinkability);
+
+        // Compact Format Demo buttons
+        document
+          .getElementById("compact-generate-keys")
+          .addEventListener("click", compactGenerateKeys);
+        document
+          .getElementById("compact-sign-sag")
+          .addEventListener("click", compactSignSAG);
+        document
+          .getElementById("compact-sign-blsag")
+          .addEventListener("click", compactSignBLSAG);
+        document
+          .getElementById("compact-compare-sizes")
+          .addEventListener("click", compactCompareSizes);
 
         // Setup tab switching
         document.querySelectorAll(".tab").forEach((tab) => {
@@ -496,6 +558,246 @@ Click "Generate Keys for Ring" to start...</pre
         } catch (error) {
           document.getElementById("blsag-output").textContent =
             "Error checking linkability: " + error.message;
+        }
+      }
+
+      // Compact Format Functions
+      function compactGenerateKeys() {
+        try {
+          const output = document.getElementById("compact-output");
+          output.textContent = "Generating keys for the ring...\n";
+
+          // Generate 3 keypairs for the ring
+          compactState.keypairs = [];
+          for (let i = 0; i < 3; i++) {
+            const format = "xonly";
+            const keypair = wasm_generate_keypair(format);
+            compactState.keypairs.push({
+              privateKeyHex: keypair.private_key_hex,
+              publicKeyHex: keypair.public_key_hex,
+            });
+          }
+
+          // Prepare ring of public keys
+          compactState.ringPubkeys = compactState.keypairs.map(
+            (kp) => kp.publicKeyHex
+          );
+
+          // Display the generated keys
+          output.textContent += "Generated 3 keypairs for the ring.\n";
+          output.textContent += `Signer will be Ring Member 2 (middle keypair).\n`;
+          output.textContent += `\nMessage to sign: "${compactState.message}"\n`;
+
+          output.textContent +=
+            '\nReady to sign. Click "Sign with SAG" to continue.';
+          document.getElementById("compact-sign-sag").disabled = false;
+        } catch (error) {
+          document.getElementById("compact-output").textContent =
+            "Error generating keys: " + error.message;
+        }
+      }
+
+      function compactSignSAG() {
+        try {
+          const output = document.getElementById("compact-output");
+          output.textContent = "Signing with both formats (SAG)...\n";
+
+          // Sign with normal hex format
+          const signerIndex = 1; // Use the second keypair (0-based index)
+          const signerPrivateKey =
+            compactState.keypairs[signerIndex].privateKeyHex;
+          const encoder = new TextEncoder();
+          const messageBytes = encoder.encode(compactState.message);
+
+          // Sign with original hex format
+          const hexSignature = wasm_sign(
+            messageBytes,
+            signerPrivateKey,
+            compactState.ringPubkeys
+          );
+          compactState.signatures.sag.hex = hexSignature;
+
+          // Sign with compact format
+          const compactSignature = wasm_sign_compact_sag(
+            messageBytes,
+            signerPrivateKey,
+            compactState.ringPubkeys
+          );
+          compactState.signatures.sag.compact = compactSignature;
+
+          // Display the signatures
+          output.textContent += "\n=== SAG Signatures ===\n";
+          output.textContent += "\nOriginal Hex Format:\n";
+          output.textContent += `c0: ${hexSignature.c0.substring(
+            0,
+            15
+          )}...${hexSignature.c0.substring(hexSignature.c0.length - 15)}\n`;
+          output.textContent += `s values: ${hexSignature.s.length} scalars, each ~64 chars\n`;
+
+          output.textContent += "\nCompact Format:\n";
+          output.textContent += `${compactSignature}\n`;
+
+          // Verify both
+          const hexValid = wasm_verify(
+            hexSignature,
+            messageBytes,
+            compactState.ringPubkeys
+          );
+          const compactValid = wasm_verify_compact(
+            compactSignature,
+            messageBytes,
+            compactState.ringPubkeys
+          );
+
+          output.textContent += `\nBoth signature formats are valid: ${
+            hexValid && compactValid ? "✓" : "✗"
+          }\n`;
+
+          output.textContent +=
+            '\nNow try "Sign with BLSAG" to create linkable signatures.';
+          document.getElementById("compact-sign-blsag").disabled = false;
+        } catch (error) {
+          document.getElementById("compact-output").textContent =
+            "Error signing with SAG: " + error.message;
+        }
+      }
+
+      function compactSignBLSAG() {
+        try {
+          const output = document.getElementById("compact-output");
+          output.textContent = "Signing with both formats (BLSAG)...\n";
+
+          // Sign with normal hex format
+          const signerIndex = 1; // Use the second keypair (0-based index)
+          const signerPrivateKey =
+            compactState.keypairs[signerIndex].privateKeyHex;
+          const encoder = new TextEncoder();
+          const messageBytes = encoder.encode(compactState.message);
+
+          // Sign with original hex format
+          const hexSignature = wasm_sign_blsag(
+            messageBytes,
+            signerPrivateKey,
+            compactState.ringPubkeys
+          );
+          compactState.signatures.blsag.hex = hexSignature;
+
+          // Sign with compact format
+          const compactSignature = wasm_sign_compact_blsag(
+            messageBytes,
+            signerPrivateKey,
+            compactState.ringPubkeys
+          );
+          compactState.signatures.blsag.compact = compactSignature;
+
+          // Display the signatures
+          output.textContent += "\n=== BLSAG Signatures ===\n";
+          output.textContent += "\nOriginal Hex Format:\n";
+          output.textContent += `c0: ${hexSignature.c0.substring(
+            0,
+            15
+          )}...${hexSignature.c0.substring(hexSignature.c0.length - 15)}\n`;
+          output.textContent += `Key Image: ${hexSignature.key_image.substring(
+            0,
+            15
+          )}...${hexSignature.key_image.substring(
+            hexSignature.key_image.length - 15
+          )}\n`;
+          output.textContent += `s values: ${hexSignature.s.length} scalars, each ~64 chars\n`;
+
+          output.textContent += "\nCompact Format:\n";
+          output.textContent += `${compactSignature}\n`;
+
+          // Verify both
+          const hexValid = wasm_verify_blsag(
+            hexSignature,
+            messageBytes,
+            compactState.ringPubkeys
+          );
+          const compactValid = wasm_verify_compact(
+            compactSignature,
+            messageBytes,
+            compactState.ringPubkeys
+          );
+
+          output.textContent += `\nBoth signature formats are valid: ${
+            hexValid && compactValid ? "✓" : "✗"
+          }\n`;
+
+          output.textContent +=
+            '\nReady to compare sizes. Click "Compare Formats" to continue.';
+          document.getElementById("compact-compare-sizes").disabled = false;
+        } catch (error) {
+          document.getElementById("compact-output").textContent =
+            "Error signing with BLSAG: " + error.message;
+        }
+      }
+
+      function compactCompareSizes() {
+        try {
+          const output = document.getElementById("compact-output");
+          output.textContent = "=== Size Comparison ===\n\n";
+
+          // Get signature info (size and variant)
+          const sagInfo = wasm_get_compact_signature_info(
+            compactState.signatures.sag.compact
+          );
+          const blsagInfo = wasm_get_compact_signature_info(
+            compactState.signatures.blsag.compact
+          );
+
+          // Calculate hex format sizes
+          const sagHexSize =
+            compactState.signatures.sag.hex.c0.length +
+            compactState.signatures.sag.hex.s.reduce(
+              (total, s) => total + s.length,
+              0
+            );
+
+          const blsagHexSize =
+            compactState.signatures.blsag.hex.c0.length +
+            compactState.signatures.blsag.hex.s.reduce(
+              (total, s) => total + s.length,
+              0
+            ) +
+            compactState.signatures.blsag.hex.key_image.length;
+
+          // Display size comparison
+          output.textContent += "SAG (Unlinkable) Signature:\n";
+          output.textContent += `  Original Hex Format: ~${sagHexSize} characters\n`;
+          output.textContent += `  Compact Format: ${sagInfo.size} bytes\n`;
+          output.textContent += `  Size Reduction: ${Math.round(
+            ((sagHexSize - sagInfo.size) / sagHexSize) * 100
+          )}%\n\n`;
+
+          output.textContent += "BLSAG (Linkable) Signature:\n";
+          output.textContent += `  Original Hex Format: ~${blsagHexSize} characters\n`;
+          output.textContent += `  Compact Format: ${blsagInfo.size} bytes\n`;
+          output.textContent += `  Size Reduction: ${Math.round(
+            ((blsagHexSize - blsagInfo.size) / blsagHexSize) * 100
+          )}%\n\n`;
+
+          // Explain the compact format
+          output.textContent += "=== How Compact Format Works ===\n\n";
+          output.textContent += "The compact format ('ringA' prefix) uses:\n";
+          output.textContent +=
+            "1. CBOR binary encoding for compact representation\n";
+          output.textContent +=
+            "2. Single-character field names (v, c, s, i)\n";
+          output.textContent +=
+            "3. Binary storage of scalars and curve points\n";
+          output.textContent +=
+            "4. base64url encoding for text transmission\n\n";
+
+          output.textContent += "Variant field indicates signature type:\n";
+          output.textContent += `  SAG signature: "${sagInfo.variant}"\n`;
+          output.textContent += `  BLSAG signature: "${blsagInfo.variant}"\n\n`;
+
+          output.textContent +=
+            "BLSAG signatures are larger but enable linkability detection.";
+        } catch (error) {
+          document.getElementById("compact-output").textContent =
+            "Error comparing sizes: " + error.message;
         }
       }
 

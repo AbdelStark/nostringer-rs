@@ -1,0 +1,55 @@
+name: Run Examples
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  run-examples:
+    name: Run all examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build examples
+        run: cargo build --examples
+
+      - name: Run basic_signing example
+        run: cargo run --example basic_signing
+
+      - name: Run key_formats example
+        run: cargo run --example key_formats
+
+      - name: Run blsag_linkability example
+        run: cargo run --example blsag_linkability
+
+      - name: Run error_handling example
+        run: cargo run --example error_handling
+
+      - name: Run binary_api example
+        run: cargo run --example binary_api
+
+      - name: Run compact_signatures example
+        run: cargo run --example compact_signatures
+
+      - name: Run format_conversion example
+        run: cargo run --example format_conversion
