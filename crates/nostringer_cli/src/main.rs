@@ -5,8 +5,10 @@ use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use nostringer::{
-    generate_keypair_hex, generate_keypairs, get_public_keys, key_images_match, sign,
-    sign_blsag_hex, types::KeyImage, verify, verify_blsag_hex, KeyPairHex, RingSignature,
+    blsag::{key_images_match, sign_blsag_hex, verify_blsag_hex},
+    generate_keypair_hex, generate_keypairs, get_public_keys,
+    sag::{sign, verify},
+    types::{KeyImage, KeyPairHex, RingSignature},
 };
 
 /// Command-line interface for the nostringer ring signature library

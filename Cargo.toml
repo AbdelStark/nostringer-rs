@@ -3,7 +3,7 @@ members = ["crates/nostringer", "crates/nostringer_cli"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.4"
+version = "0.1.5"
 authors = ["AbdelStark <@AbdelStark>"]
 description = "Ring signatures (SAG, BLSAG) for Nostr"
 repository = "https://github.com/AbdelStark/nostringer-rs"

@@ -605,7 +605,7 @@ dependencies = [
 
 [[package]]
 name = "nostringer"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "colored",
  "console_error_panic_hook",
@@ -625,9 +625,9 @@ dependencies = [
 
 [[package]]
 name = "nostringer"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b876a3a8be144f28030e8f84072349cea6851dfa28ee9975dedcd3075d8f7aad"
+checksum = "228c44fc4da12a975c6e3976a022011eff13d20837ba0540d1d4e19893913336"
 dependencies = [
  "hex",
  "k256",
@@ -639,13 +639,13 @@ dependencies = [
 
 [[package]]
 name = "nostringer_cli"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "clap 4.5.34",
  "colored",
  "hex",
- "nostringer 0.1.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "nostringer 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_json",
 ]
 

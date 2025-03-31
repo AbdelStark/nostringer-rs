@@ -11,7 +11,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-nostringer = { version = "0.1.4" }
+nostringer = { version = "0.1.5" }
 clap = { workspace = true }
 anyhow = { workspace = true }
 colored = { workspace = true }
