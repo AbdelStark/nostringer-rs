@@ -18,11 +18,14 @@ rand = { workspace = true }
 sha2 = { workspace = true }
 subtle = { workspace = true }
 thiserror = { workspace = true }
-serde = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"] }
+serde_cbor = "0.11"
+base64 = "0.22"
 wasm-bindgen = { version = "0.2", optional = true }
 getrandom = { version = "0.2", features = ["js"], optional = true }
 js-sys = { version = "0.3", optional = true }
 console_error_panic_hook = { version = "0.1.7", optional = true }
+serde_bytes = "0.11.17"
 
 [dev-dependencies]
 criterion = { version = "0.4", features = ["html_reports"] }
@@ -31,7 +34,7 @@ wasm-bindgen-test = "0.3"
 
 [features]
 default = []
-serde = ["dep:serde"]
+serde = []
 wasm = [
     "dep:wasm-bindgen",
     "dep:getrandom",

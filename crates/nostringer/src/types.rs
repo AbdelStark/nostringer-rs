@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::utils::hex_to_point;
 
 /// Errors that can occur during ring signature operations
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum Error {
     /// Error in hexadecimal decoding
     #[error("Hex decoding failed: {0}")]
@@ -50,6 +50,14 @@ pub enum Error {
     /// Error during hashing operations
     #[error("Hashing error: {0}")]
     HashingError(String),
+
+    /// Error during point decompression
+    #[error("Point decompression error: {0}")]
+    PointDecompression(String),
+
+    /// Serialization error from the serialization module
+    #[error("Serialization error: {0}")]
+    Serialization(String),
 }
 
 /// A ring signature consisting of an initial commitment value c0 and a vector of s values
