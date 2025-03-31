@@ -1,4 +1,8 @@
-use nostringer::{generate_keypair_hex, sign, verify, Error, RingSignature};
+use nostringer::{
+    generate_keypair_hex,
+    sag::{sign, verify},
+    types::{Error, RingSignature},
+};
 use std::time::Instant;
 
 fn main() {

@@ -1,4 +1,8 @@
-use nostringer::{generate_keypair_hex, generate_keypairs, get_public_keys, sign, verify, Error};
+use nostringer::{
+    generate_keypair_hex, generate_keypairs, get_public_keys,
+    sag::{sign, verify},
+    types::Error,
+};
 
 fn main() -> Result<(), Error> {
     println!("Nostringer Key Format Example");

@@ -1,10 +1,13 @@
 #[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
 
-// Re-export the core types for WASM
+// Re-export the core types and functions needed for WASM
 #[cfg(feature = "wasm")]
 use crate::{
-    generate_keypair_hex, key_images_match, sign, sign_blsag_hex, verify, verify_blsag_hex,
+    // Group imports for clarity
+    blsag::{key_images_match, sign_blsag_hex, verify_blsag_hex},
+    keys::generate_keypair_hex,
+    sag::{sign, verify},
 };
 
 /// Set up panic hook for better error messages in WASM

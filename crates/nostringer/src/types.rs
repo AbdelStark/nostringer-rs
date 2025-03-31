@@ -234,7 +234,7 @@ pub(crate) fn scalar_to_hex(scalar: &Scalar) -> String {
 /// Returns an error if:
 /// * The hex string is invalid
 /// * The resulting value is not a valid scalar (>= curve order)
-pub(crate) fn hex_to_scalar(hex_str: &str) -> Result<Scalar, Error> {
+pub fn hex_to_scalar(hex_str: &str) -> Result<Scalar, Error> {
     // Get normalized hex without 0x prefix and all lowercase
     let hex_str = normalize_hex(hex_str)?;
 

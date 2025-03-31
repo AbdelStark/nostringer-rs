@@ -1,6 +1,8 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use nostringer::{
-    generate_keypairs, get_public_keys, sign, sign_blsag_hex, verify, verify_blsag_hex,
+    blsag::{sign_blsag_hex, verify_blsag_hex},
+    generate_keypairs, get_public_keys,
+    sag::{sign, verify},
 };
 
 // ---- SAG Benchmarks (Standard Unlinkable Ring Signatures) ----

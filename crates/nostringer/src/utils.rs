@@ -1,7 +1,7 @@
-use crate::types::Error;
-use k256::{elliptic_curve::rand_core, NonZeroScalar, ProjectivePoint, PublicKey};
+use k256::{NonZeroScalar, ProjectivePoint, PublicKey};
+use rand::{CryptoRng, RngCore};
 
-use crate::normalize_hex;
+use crate::types::{normalize_hex, Error};
 
 /// Converts a hexadecimal public key string to a curve point
 ///
@@ -74,8 +74,6 @@ pub fn hex_to_point(pubkey_hex: &str) -> Result<ProjectivePoint, Error> {
 ///
 /// # Returns
 /// A non-zero scalar value from the Secp256k1 field
-pub fn random_non_zero_scalar(
-    mut rng: impl rand_core::RngCore + rand_core::CryptoRng,
-) -> NonZeroScalar {
+pub fn random_non_zero_scalar(mut rng: impl RngCore + CryptoRng) -> NonZeroScalar {
     NonZeroScalar::random(&mut rng)
 }

@@ -1,10 +1,11 @@
 use colored::Colorize;
 use nostringer::{
-    generate_keypairs, get_public_keys, key_images_match, sign_blsag_hex, types::KeyImage,
-    verify_blsag_hex,
+    blsag::{key_images_match, sign_blsag_hex, verify_blsag_hex},
+    generate_keypairs, get_public_keys,
+    types::{Error, KeyImage},
 };
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Error> {
     println!(
         "{}",
         "NOSTRINGER BLSAG EXAMPLE: Linkable Ring Signatures"
