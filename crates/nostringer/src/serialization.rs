@@ -183,7 +183,7 @@ impl TryFrom<SerializedSignatureData> for CompactSignature {
             .try_into()
             .map_err(|_| SerializationError::InvalidLength("c0 conversion failed".to_string()))?;
         let c0_opt = Scalar::from_repr_vartime(c0_bytes.into());
-        if c0_opt.is_none().into() {
+        if c0_opt.is_none() {
             return Err(SerializationError::InternalError(
                 "Invalid scalar value for c0".into(),
             ));
@@ -202,7 +202,7 @@ impl TryFrom<SerializedSignatureData> for CompactSignature {
                 SerializationError::InvalidLength("s conversion failed".to_string())
             })?;
             let s_opt = Scalar::from_repr_vartime(s_bytes.into());
-            if s_opt.is_none().into() {
+            if s_opt.is_none() {
                 return Err(SerializationError::InternalError(
                     "Invalid scalar value for s".into(),
                 ));
