@@ -53,3 +53,6 @@ jobs:
 
       - name: Run format_conversion example
         run: cargo run --example format_conversion
+
+      - name: Run nostr_integration example
+        run: cargo run --example nostr_integration
