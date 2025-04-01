@@ -8,7 +8,6 @@ use rand::RngCore;
 use sha2::{Digest, Sha256};
 use subtle::{ConditionallySelectable, ConstantTimeEq};
 
-use crate::keys::{generate_keypair_hex, generate_keypairs};
 use crate::types::{hex_to_scalar, Error, RingSignature, RingSignatureBinary};
 use crate::utils::{hex_to_point, random_non_zero_scalar};
 

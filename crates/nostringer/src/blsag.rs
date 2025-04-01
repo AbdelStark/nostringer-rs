@@ -343,9 +343,7 @@ mod tests {
     use crate::types::hex_to_scalar;
     use crate::types::KeyImage;
     use crate::utils::hex_to_point;
-    use k256::elliptic_curve::group::GroupEncoding;
     use k256::{ProjectivePoint, Scalar};
-    use rand::rngs::OsRng;
 
     // Helper to setup a ring and signer for tests
     fn setup_blsag_test_ring(ring_size: usize) -> (Vec<ProjectivePoint>, Scalar, usize) {

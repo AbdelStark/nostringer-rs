@@ -22,3 +22,6 @@ target/
 CLAUDE.md
 .cursor
 .cursorrules
+
+# Coverage
+cobertura.xml

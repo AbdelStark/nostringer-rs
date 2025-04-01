@@ -92,7 +92,6 @@ mod tests {
     use super::*; // Import items from parent module (keys.rs)
     use crate::types::hex_to_scalar;
     use crate::utils::hex_to_point;
-    use k256::elliptic_curve::group::GroupEncoding; // For checking point format
     use k256::ProjectivePoint;
 
     #[test]
@@ -122,11 +121,8 @@ mod tests {
         let kp_xonly = generate_keypair_hex("xonly");
         assert_eq!(kp_xonly.private_key_hex.len(), 64);
         assert_eq!(kp_xonly.public_key_hex.len(), 64);
-        // Verify xonly logic (even Y coordinate)
-        let sk = hex_to_scalar(&kp_xonly.private_key_hex).unwrap();
         let pk = hex_to_point(&kp_xonly.public_key_hex).unwrap(); // hex_to_point assumes even Y for 64 len
-        let point = ProjectivePoint::GENERATOR * sk;
-        let affine = point.to_affine();
+
         // If original Y was odd, generate_keypair_hex flips the scalar internally
         // So, the point derived from the *returned* public key should always have even Y
         assert!(
