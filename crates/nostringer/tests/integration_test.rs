@@ -359,11 +359,13 @@ fn test_blsag_verification_fail_invalid_key_image_format() {
     // Verify with an invalid hex string for key image
     let invalid_ki_hex = "invalid-hex-string";
     let result = verify_blsag_hex(&sig, invalid_ki_hex, message, &ring);
-    assert!(matches!(result, Err(Error::PublicKeyFormat(_))));
+    // Should fail with HexDecode error from KeyImage::from_hex
+    assert!(matches!(result, Err(Error::HexDecode(_))));
 
     // Verify with a valid hex but incorrect length
     let short_ki_hex = "02aabbcc";
     let result_short = verify_blsag_hex(&sig, short_ki_hex, message, &ring);
+    // Should fail with PublicKeyFormat error from hex_to_point inside KeyImage::from_hex
     assert!(matches!(result_short, Err(Error::PublicKeyFormat(_))));
 }
 

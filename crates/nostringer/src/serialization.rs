@@ -3,6 +3,7 @@ use k256::elliptic_curve::{sec1::ToEncodedPoint, PrimeField};
 use k256::Scalar;
 use serde::{Deserialize, Serialize};
 use serde_cbor::Error as CborError;
+use thiserror::Error;
 
 // Access KeyImage through the public type
 use crate::types::KeyImage;
@@ -32,43 +33,49 @@ struct SerializedSignatureData {
     key_image: Option<Vec<u8>>,
 }
 
-/// Errors that can occur during signature serialization or deserialization.
-#[derive(thiserror::Error, Debug, PartialEq)]
+/// Errors related to compact signature serialization and deserialization
+#[derive(Debug, PartialEq, Eq, Error)]
 pub enum SerializationError {
-    #[error("CBOR serialization error: {0}")]
-    CborSerialization(String),
-    #[error("CBOR deserialization error: {0}")]
-    CborDeserialization(String),
-    #[error("Base64 decoding error: {0}")]
-    Base64Decoding(#[from] base64::DecodeError),
-    #[error("Invalid prefix: expected '{SIGNATURE_PREFIX}{SIGNATURE_VERSION}', got '{0}'")]
-    InvalidPrefix(String),
-    #[error("Invalid signature variant: '{0}'")]
-    InvalidVariant(String),
-    #[error("Invalid data length: {0}")]
-    InvalidLength(String),
-    #[error("Missing key image for BLSAG signature")]
-    MissingKeyImage,
+    #[error("Invalid prefix, expected 'ringA'")]
+    InvalidPrefix,
+
+    #[error("Base64 decoding failed: {0}")]
+    Base64Decode(#[from] base64::DecodeError),
+
+    #[error("CBOR decoding failed: {0}")]
+    CborDecode(String),
+
+    #[error("Invalid CBOR structure (expected array with 3 or 4 elements)")]
+    InvalidStructure(String),
+
+    #[error("Invalid signature variant tag: {0}")]
+    InvalidVariantTag(u8),
+
     #[error("Unexpected key image found for SAG signature")]
     UnexpectedKeyImage,
-    #[error("SEC1 encoding error: {0}")]
-    Sec1Error(String),
-    #[error("Internal error: {0}")]
-    InternalError(String),
+
+    #[error("Key image missing for BLSAG signature")]
+    MissingKeyImage,
+
+    #[error("Failed to convert data during deserialization: {0}")]
+    DataConversion(String),
+
+    #[error("CBOR encoding failed: {0}")]
+    CborEncode(String),
 }
 
 impl From<CborError> for SerializationError {
     fn from(e: CborError) -> Self {
         // Distinguish between serialization and deserialization errors if possible
         // For now, categorizing based on context might be needed, or just use a generic message
-        SerializationError::CborDeserialization(e.to_string()) // Assume deserialization for now
+        SerializationError::CborDecode(e.to_string()) // Assume deserialization for now
     }
 }
 
 // Manually convert from elliptic_curve Error to SerializationError
 impl From<k256::elliptic_curve::Error> for SerializationError {
     fn from(e: k256::elliptic_curve::Error) -> Self {
-        SerializationError::Sec1Error(e.to_string())
+        SerializationError::DataConversion(e.to_string())
     }
 }
 
@@ -83,8 +90,8 @@ impl CompactSignature {
     /// Serialize the compact signature to the `ringA...` format string.
     pub fn serialize(&self) -> Result<String, SerializationError> {
         let data: SerializedSignatureData = self.try_into()?;
-        let cbor_bytes = serde_cbor::to_vec(&data)
-            .map_err(|e| SerializationError::CborSerialization(e.to_string()))?;
+        let cbor_bytes =
+            serde_cbor::to_vec(&data).map_err(|e| SerializationError::CborEncode(e.to_string()))?;
         let base64_encoded = URL_SAFE_NO_PAD.encode(&cbor_bytes);
         Ok(format!(
             "{}{}{}",
@@ -96,18 +103,13 @@ impl CompactSignature {
     pub fn deserialize(encoded: &str) -> Result<Self, SerializationError> {
         let prefix = format!("{}{}", SIGNATURE_PREFIX, SIGNATURE_VERSION);
         if !encoded.starts_with(&prefix) {
-            return Err(SerializationError::InvalidPrefix(
-                encoded
-                    .split_at(prefix.len().min(encoded.len()))
-                    .0
-                    .to_string(),
-            ));
+            return Err(SerializationError::InvalidPrefix);
         }
 
         let base64_data = &encoded[prefix.len()..];
         let cbor_bytes = URL_SAFE_NO_PAD.decode(base64_data)?;
         let data: SerializedSignatureData = serde_cbor::from_slice(&cbor_bytes)
-            .map_err(|e| SerializationError::CborDeserialization(e.to_string()))?;
+            .map_err(|e| SerializationError::CborDecode(e.to_string()))?;
 
         Self::try_from(data)
     }
@@ -130,7 +132,7 @@ impl TryFrom<&CompactSignature> for SerializedSignatureData {
         match value {
             CompactSignature::Sag(sig) => {
                 if sig.s.is_empty() {
-                    return Err(SerializationError::InternalError(
+                    return Err(SerializationError::DataConversion(
                         "Invalid signature format: empty s values".to_string(),
                     ));
                 }
@@ -143,7 +145,7 @@ impl TryFrom<&CompactSignature> for SerializedSignatureData {
             }
             CompactSignature::Blsag(sig, key_image) => {
                 if sig.s.is_empty() {
-                    return Err(SerializationError::InternalError(
+                    return Err(SerializationError::DataConversion(
                         "Invalid signature format: empty s values".to_string(),
                     ));
                 }
@@ -153,7 +155,7 @@ impl TryFrom<&CompactSignature> for SerializedSignatureData {
                     .as_bytes()
                     .to_vec();
                 if key_image_bytes.len() != 33 {
-                    return Err(SerializationError::InvalidLength(
+                    return Err(SerializationError::DataConversion(
                         "Key image must be 33 bytes".to_string(),
                     ));
                 }
@@ -174,17 +176,19 @@ impl TryFrom<SerializedSignatureData> for CompactSignature {
     fn try_from(data: SerializedSignatureData) -> Result<Self, Self::Error> {
         // Validate c0 length
         if data.c0.len() != 32 {
-            return Err(SerializationError::InvalidLength(
+            return Err(SerializationError::DataConversion(
                 "c0 must be 32 bytes".to_string(),
             ));
         }
-        let c0_bytes: [u8; 32] = data
-            .c0
-            .try_into()
-            .map_err(|_| SerializationError::InvalidLength("c0 conversion failed".to_string()))?;
+        let c0_bytes: [u8; 32] = data.c0.try_into().map_err(|e: Vec<u8>| {
+            SerializationError::DataConversion(format!(
+                "Incorrect length for c0: expected 32, got {}",
+                e.len()
+            ))
+        })?;
         let c0_opt = Scalar::from_repr_vartime(c0_bytes.into());
         if c0_opt.is_none() {
-            return Err(SerializationError::InternalError(
+            return Err(SerializationError::DataConversion(
                 "Invalid scalar value for c0".into(),
             ));
         }
@@ -194,16 +198,19 @@ impl TryFrom<SerializedSignatureData> for CompactSignature {
         let mut s_scalars = Vec::with_capacity(data.s.len());
         for s_bytes_vec in data.s {
             if s_bytes_vec.len() != 32 {
-                return Err(SerializationError::InvalidLength(
+                return Err(SerializationError::DataConversion(
                     "Each s must be 32 bytes".to_string(),
                 ));
             }
-            let s_bytes: [u8; 32] = s_bytes_vec.try_into().map_err(|_| {
-                SerializationError::InvalidLength("s conversion failed".to_string())
+            let s_bytes: [u8; 32] = s_bytes_vec.try_into().map_err(|e: Vec<u8>| {
+                SerializationError::DataConversion(format!(
+                    "Incorrect length for s: expected 32, got {}",
+                    e.len()
+                ))
             })?;
             let s_opt = Scalar::from_repr_vartime(s_bytes.into());
             if s_opt.is_none() {
-                return Err(SerializationError::InternalError(
+                return Err(SerializationError::DataConversion(
                     "Invalid scalar value for s".into(),
                 ));
             }
@@ -221,7 +228,7 @@ impl TryFrom<SerializedSignatureData> for CompactSignature {
             "blsag" => {
                 let key_image_bytes = data.key_image.ok_or(SerializationError::MissingKeyImage)?;
                 if key_image_bytes.len() != 33 {
-                    return Err(SerializationError::InvalidLength(
+                    return Err(SerializationError::DataConversion(
                         "Key image must be 33 bytes".to_string(),
                     ));
                 }
@@ -230,7 +237,7 @@ impl TryFrom<SerializedSignatureData> for CompactSignature {
                 let key_image_point = match k256::PublicKey::from_sec1_bytes(&key_image_bytes) {
                     Ok(pk) => pk.to_projective(),
                     Err(e) => {
-                        return Err(SerializationError::InternalError(format!(
+                        return Err(SerializationError::DataConversion(format!(
                             "Invalid key image: {}",
                             e
                         )))
@@ -241,7 +248,9 @@ impl TryFrom<SerializedSignatureData> for CompactSignature {
                 let key_image = KeyImage(key_image_point);
                 Ok(CompactSignature::Blsag(sig, key_image))
             }
-            _ => Err(SerializationError::InvalidVariant(data.variant)),
+            _ => Err(SerializationError::InvalidVariantTag(
+                data.variant.chars().next().unwrap() as u8,
+            )),
         }
     }
 }
@@ -322,14 +331,14 @@ mod tests {
     fn test_invalid_prefix() {
         let invalid_encoded = "rngA....";
         let result = CompactSignature::deserialize(invalid_encoded);
-        assert!(matches!(result, Err(SerializationError::InvalidPrefix(_))));
+        assert!(matches!(result, Err(SerializationError::InvalidPrefix)));
     }
 
     #[test]
     fn test_invalid_base64() {
         let invalid_encoded = "ringA***";
         let result = CompactSignature::deserialize(invalid_encoded);
-        assert!(matches!(result, Err(SerializationError::Base64Decoding(_))));
+        assert!(matches!(result, Err(SerializationError::Base64Decode(_))));
     }
 
     #[test]
@@ -338,43 +347,92 @@ mod tests {
         let invalid_cbor_base64 = URL_SAFE_NO_PAD.encode(&[0x01, 0x02, 0x03]);
         let invalid_encoded = format!("ringA{}", invalid_cbor_base64);
         let result = CompactSignature::deserialize(&invalid_encoded);
-        assert!(matches!(
-            result,
-            Err(SerializationError::CborDeserialization(_))
-        ));
+        assert!(matches!(result, Err(SerializationError::CborDecode(_))));
     }
 
     #[test]
-    fn test_missing_key_image_blsag() {
-        // Create valid BLSAG data but omit key image during serialization
+    fn test_invalid_cbor_structure() {
+        // Correct CBOR, but wrong structure (e.g., not an array)
+        let invalid_structure_cbor = serde_cbor::to_vec(&"just a string").unwrap();
+        let invalid_structure_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&invalid_structure_cbor);
+        let result = CompactSignature::deserialize(&format!("ringA{}", invalid_structure_b64));
+        // Deserialization into SerializedSignatureData fails first
+        assert!(
+            matches!(result, Err(SerializationError::CborDecode(_))),
+            "Expected CborDecode for wrong structure"
+        );
+
+        // Correct CBOR array, but wrong number of elements
+        let invalid_element_count_cbor = serde_cbor::to_vec(&[1, 2]).unwrap(); // Expecting 3 or 4 elements
+        let invalid_element_count_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&invalid_element_count_cbor);
+        let result_count =
+            CompactSignature::deserialize(&format!("ringA{}", invalid_element_count_b64));
+        // Also fails during deserialization into SerializedSignatureData
+        assert!(
+            matches!(result_count, Err(SerializationError::CborDecode(_))),
+            "Expected CborDecode for wrong element count"
+        );
+    }
+
+    #[test]
+    fn test_invalid_variant_tag() {
+        // Correct CBOR structure, but invalid variant tag (e.g., 3 instead of 0 or 1)
+        // We need to craft the SerializedSignatureData manually for this
         let data = SerializedSignatureData {
-            variant: "blsag".to_string(),
+            variant: "invalid_variant_3".to_string(), // Invalid variant string
             c0: vec![0u8; 32],
             s: vec![vec![0u8; 32]],
-            key_image: None, // Omit key image
+            key_image: None,
         };
-        let cbor_bytes = serde_cbor::to_vec(&data).unwrap();
-        let base64_encoded = URL_SAFE_NO_PAD.encode(&cbor_bytes);
-        let encoded = format!("ringA{}", base64_encoded);
-
-        let result = CompactSignature::deserialize(&encoded);
-        assert_eq!(result, Err(SerializationError::MissingKeyImage));
+        let invalid_variant_cbor = serde_cbor::to_vec(&data).unwrap();
+        let invalid_variant_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&invalid_variant_cbor);
+        let result = CompactSignature::deserialize(&format!("ringA{}", invalid_variant_b64));
+        // The error occurs during the final match statement in TryFrom<SerializedSignatureData>
+        // We expect the first byte of the invalid variant string here
+        assert!(
+            matches!(result, Err(SerializationError::InvalidVariantTag(b'i'))),
+            "Expected InvalidVariantTag error"
+        );
     }
 
     #[test]
-    fn test_unexpected_key_image_sag() {
-        // Create valid SAG data but include a key image
-        let data = SerializedSignatureData {
+    fn test_key_image_mismatch() {
+        // Test SAG signature with unexpected key image
+        let sag_data_with_ki = SerializedSignatureData {
             variant: "sag".to_string(),
             c0: vec![0u8; 32],
             s: vec![vec![0u8; 32]],
-            key_image: Some(vec![2u8; 33]), // Add unexpected key image
+            key_image: Some(vec![2u8; 33]), // Unexpected KI for SAG
         };
-        let cbor_bytes = serde_cbor::to_vec(&data).unwrap();
-        let base64_encoded = URL_SAFE_NO_PAD.encode(&cbor_bytes);
-        let encoded = format!("ringA{}", base64_encoded);
+        let unexpected_ki_cbor = serde_cbor::to_vec(&sag_data_with_ki).unwrap();
+        let unexpected_ki_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&unexpected_ki_cbor);
+        let result_sag = CompactSignature::deserialize(&format!("ringA{}", unexpected_ki_b64));
+        assert!(
+            matches!(result_sag, Err(SerializationError::UnexpectedKeyImage)),
+            "Expected UnexpectedKeyImage error for SAG"
+        );
 
-        let result = CompactSignature::deserialize(&encoded);
-        assert_eq!(result, Err(SerializationError::UnexpectedKeyImage));
+        // Test BLSAG signature missing key image
+        let blsag_data_no_ki = SerializedSignatureData {
+            variant: "blsag".to_string(),
+            c0: vec![0u8; 32],
+            s: vec![vec![0u8; 32]],
+            key_image: None, // Missing KI for BLSAG
+        };
+        let missing_ki_cbor = serde_cbor::to_vec(&blsag_data_no_ki).unwrap();
+        let missing_ki_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&missing_ki_cbor);
+        let result_blsag = CompactSignature::deserialize(&format!("ringA{}", missing_ki_b64));
+        assert!(
+            matches!(result_blsag, Err(SerializationError::MissingKeyImage)),
+            "Expected MissingKeyImage error for BLSAG"
+        );
     }
+
+    // Potential tests for invalid CBOR types within the structure (e.g., string where bytes expected)
+    // These are harder to craft manually but might be caught by CborDecode or InvalidStructure
 }
