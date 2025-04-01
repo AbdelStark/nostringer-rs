@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
+use nostr::prelude::{Keys, ToBech32};
 use nostringer::{
     blsag::{key_images_match, sign_blsag_hex, verify_blsag_hex},
     generate_keypair_hex, generate_keypairs, get_public_keys, sag,
@@ -82,6 +83,9 @@ enum Commands {
 
     /// Run a demo with a large ring of 100 members
     BigRingDemo,
+
+    /// Run a demo of nostringer integrated with Nostr keys (npub/nsec)
+    NostrDemo,
 }
 
 fn main() -> Result<()> {
@@ -200,6 +204,10 @@ fn main() -> Result<()> {
 
         Commands::BigRingDemo => {
             run_big_ring_demo()?;
+        }
+
+        Commands::NostrDemo => {
+            run_nostr_demo()?;
         }
     }
 
@@ -1015,6 +1023,262 @@ fn run_big_ring_demo() -> Result<()> {
     println!("└─────────────┴────────────┴────────────┴────────────┘");
 
     println!("\n{}", "=== BIG RING DEMO COMPLETE ===".bold().green());
+    Ok(())
+}
+
+/// Run a demo of nostringer integrated with Nostr keys (npub/nsec format)
+fn run_nostr_demo() -> Result<()> {
+    println!(
+        "\n{}",
+        "=== NOSTRINGER WITH NOSTR INTEGRATION DEMO ==="
+            .bold()
+            .green()
+    );
+    println!(
+        "{}",
+        "This demo shows how to use nostringer with Nostr keys in npub/nsec format.".italic()
+    );
+
+    println!(
+        "\n{}",
+        "1. Generating Nostr keys for ring members...".bold()
+    );
+
+    // Generate 3 Nostr keys
+    let nostr_key1 = Keys::generate();
+    let nostr_key2 = Keys::generate();
+    let nostr_key3 = Keys::generate();
+
+    // Display Ring Member 1 keys in both formats
+    println!("Ring Member 1:");
+    println!(
+        "  Public Key (hex): {}",
+        nostr_key1.public_key().to_hex().cyan()
+    );
+    println!(
+        "  Public Key (npub): {}",
+        nostr_key1
+            .public_key()
+            .to_bech32()
+            .expect("Public key to_bech32 should not fail")
+            .cyan()
+    );
+    println!(
+        "  Secret Key (hex): {}",
+        nostr_key1.secret_key().to_secret_hex().yellow()
+    );
+    println!(
+        "  Secret Key (nsec): {}",
+        nostr_key1
+            .secret_key()
+            .to_bech32()
+            .expect("Secret key to_bech32 should not fail")
+            .yellow()
+    );
+
+    // Display Ring Member 2 keys in both formats
+    println!("\nRing Member 2:");
+    println!(
+        "  Public Key (hex): {}",
+        nostr_key2.public_key().to_hex().cyan()
+    );
+    println!(
+        "  Public Key (npub): {}",
+        nostr_key2
+            .public_key()
+            .to_bech32()
+            .expect("Public key to_bech32 should not fail")
+            .cyan()
+    );
+    println!(
+        "  Secret Key (hex): {}",
+        nostr_key2.secret_key().to_secret_hex().yellow()
+    );
+    println!(
+        "  Secret Key (nsec): {}",
+        nostr_key2
+            .secret_key()
+            .to_bech32()
+            .expect("Secret key to_bech32 should not fail")
+            .yellow()
+    );
+
+    // Display Ring Member 3 keys in both formats
+    println!("\nRing Member 3:");
+    println!(
+        "  Public Key (hex): {}",
+        nostr_key3.public_key().to_hex().cyan()
+    );
+    println!(
+        "  Public Key (npub): {}",
+        nostr_key3
+            .public_key()
+            .to_bech32()
+            .expect("Public key to_bech32 should not fail")
+            .cyan()
+    );
+    println!(
+        "  Secret Key (hex): {}",
+        nostr_key3.secret_key().to_secret_hex().yellow()
+    );
+    println!(
+        "  Secret Key (nsec): {}",
+        nostr_key3
+            .secret_key()
+            .to_bech32()
+            .expect("Secret key to_bech32 should not fail")
+            .yellow()
+    );
+
+    // Create rings with different formats for the same members
+    println!("\n{}", "2. Creating rings with different formats...".bold());
+
+    // Create a ring with hex public keys
+    let ring_hex = vec![
+        nostr_key1.public_key().to_hex(),
+        nostr_key2.public_key().to_hex(),
+        nostr_key3.public_key().to_hex(),
+    ];
+
+    // Create a ring with npub public keys
+    let ring_npub = vec![
+        nostr_key1
+            .public_key()
+            .to_bech32()
+            .expect("Public key to_bech32 should not fail"),
+        nostr_key2
+            .public_key()
+            .to_bech32()
+            .expect("Public key to_bech32 should not fail"),
+        nostr_key3
+            .public_key()
+            .to_bech32()
+            .expect("Public key to_bech32 should not fail"),
+    ];
+
+    println!("Created ring with {} members in hex format", ring_hex.len());
+    println!(
+        "Created ring with {} members in npub format",
+        ring_npub.len()
+    );
+
+    // Create a message to sign
+    println!("\n{}", "3. Creating a message to sign...".bold());
+    let message = "This is a message signed by one of the ring members using Nostr keys";
+    println!("Message: {}", message.green());
+
+    // Sign the message with hex keys
+    println!("\n{}", "4. Signing with hex keys...".bold());
+    println!("Signing with Ring Member 2's private key in hex format...");
+
+    let hex_signature = nostringer::sign(
+        message.as_bytes(),
+        &nostr_key2.secret_key().to_secret_hex(),
+        &ring_hex,
+        SignatureVariant::Sag,
+    )
+    .context("Failed to sign with hex keys")?;
+
+    println!("\nSignature created with hex keys:");
+    println!("{}", hex_signature.bright_magenta());
+
+    // Verify signatures with different key formats
+    println!(
+        "\n{}",
+        "5. Verifying signatures with different key formats...".bold()
+    );
+
+    // Verify hex signature with hex keys
+    let is_valid_hex_hex = nostringer::verify(&hex_signature, message.as_bytes(), &ring_hex)
+        .context("Failed to verify hex signature with hex keys")?;
+
+    println!(
+        "Hex signature verified with hex keys: {}",
+        if is_valid_hex_hex {
+            "Valid ✓".green().bold()
+        } else {
+            "Invalid ✗".red().bold()
+        }
+    );
+
+    // Verify hex signature with npub keys
+    let is_valid_hex_npub = nostringer::verify(&hex_signature, message.as_bytes(), &ring_npub)
+        .context("Failed to verify hex signature with npub keys")?;
+
+    println!(
+        "Hex signature verified with npub keys: {}",
+        if is_valid_hex_npub {
+            "Valid ✓".green().bold()
+        } else {
+            "Invalid ✗".red().bold()
+        }
+    );
+
+    // Cross-format mixing test
+    println!(
+        "\n{}",
+        "6. Testing with mixed key formats in ring...".bold()
+    );
+
+    // Create a ring with mixed formats (hex and npub)
+    let ring_mixed = vec![
+        nostr_key1.public_key().to_hex(),
+        nostr_key2
+            .public_key()
+            .to_bech32()
+            .expect("Public key to_bech32 should not fail"),
+        nostr_key3.public_key().to_hex(),
+    ];
+
+    println!(
+        "Created mixed format ring with {} members",
+        ring_mixed.len()
+    );
+
+    // Verify the mixed ring signature
+    let is_valid_mixed = nostringer::verify(&hex_signature, message.as_bytes(), &ring_mixed)
+        .context("Failed to verify signature with mixed format ring")?;
+
+    println!(
+        "Mixed format ring verification: {}",
+        if is_valid_mixed {
+            "Valid ✓".green().bold()
+        } else {
+            "Invalid ✗".red().bold()
+        }
+    );
+
+    // Explanation section
+    println!("\n{}", "ABOUT NOSTR INTEGRATION:".bold().yellow());
+    println!("1. Key Format Support:");
+    println!("   - nostringer now seamlessly supports Nostr's bech32 key formats:");
+    println!("     * npub1... - Nostr public keys (bech32 encoded)");
+    println!("     * nsec1... - Nostr private keys (bech32 encoded)");
+    println!("   - Original hex format is still fully supported");
+    println!("   - Mixed formats work in the same ring");
+
+    println!("\n2. Benefits:");
+    println!("   - Direct integration with Nostr applications");
+    println!("   - No manual conversion between formats needed");
+    println!("   - Human-friendly key format with error detection");
+    println!("   - Compatible with existing Nostr tools and libraries");
+
+    println!("\n3. Implementation Details:");
+    println!("   - Automatic format detection based on prefix");
+    println!("   - Transparent conversion between formats");
+    println!("   - Error handling for invalid keys");
+    println!("   - Compact signatures work with all key formats");
+
+    println!("\n4. Use Cases:");
+    println!("   - Anonymous group signatures for Nostr events");
+    println!("   - Unlinkable voting systems on Nostr");
+    println!("   - Privacy-preserving Nostr applications");
+    println!("   - Group attestations with plausible deniability");
+
+    println!(
+        "\n{}",
+        "=== NOSTR INTEGRATION DEMO COMPLETE ===".bold().green()
+    );
     Ok(())
 }
 

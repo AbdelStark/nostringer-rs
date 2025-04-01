@@ -11,11 +11,12 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-nostringer = { version = "0.1.7", features = ["wasm"] }
-#nostringer = { path = "../nostringer" }
+#nostringer = { version = "0.1.7", features = ["wasm"] }
+nostringer = { path = "../nostringer" }
 clap = { workspace = true }
 anyhow = { workspace = true }
 colored = { workspace = true }
 hex = { workspace = true }
 serde_json = "1.0.113"
 rand = "0.8.5"
+nostr = "0.40.0"
