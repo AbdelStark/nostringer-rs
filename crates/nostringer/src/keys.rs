@@ -86,3 +86,81 @@ pub fn get_public_keys(keypairs: &[KeyPairHex]) -> Vec<String> {
         .map(|kp| kp.public_key_hex.clone())
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*; // Import items from parent module (keys.rs)
+    use crate::types::hex_to_scalar;
+    use crate::utils::hex_to_point;
+    use k256::elliptic_curve::group::GroupEncoding; // For checking point format
+    use k256::ProjectivePoint;
+
+    #[test]
+    fn test_generate_keypair_hex_formats() {
+        // Compressed
+        let kp_comp = generate_keypair_hex("compressed");
+        assert_eq!(kp_comp.private_key_hex.len(), 64);
+        assert_eq!(kp_comp.public_key_hex.len(), 66);
+        assert!(
+            kp_comp.public_key_hex.starts_with("02") || kp_comp.public_key_hex.starts_with("03")
+        );
+        // Verify keys match
+        let sk = hex_to_scalar(&kp_comp.private_key_hex).unwrap();
+        let pk = hex_to_point(&kp_comp.public_key_hex).unwrap();
+        assert_eq!(ProjectivePoint::GENERATOR * sk, pk);
+
+        // Uncompressed
+        let kp_uncomp = generate_keypair_hex("uncompressed");
+        assert_eq!(kp_uncomp.private_key_hex.len(), 64);
+        assert_eq!(kp_uncomp.public_key_hex.len(), 130);
+        assert!(kp_uncomp.public_key_hex.starts_with("04"));
+        let sk = hex_to_scalar(&kp_uncomp.private_key_hex).unwrap();
+        let pk = hex_to_point(&kp_uncomp.public_key_hex).unwrap();
+        assert_eq!(ProjectivePoint::GENERATOR * sk, pk);
+
+        // XOnly
+        let kp_xonly = generate_keypair_hex("xonly");
+        assert_eq!(kp_xonly.private_key_hex.len(), 64);
+        assert_eq!(kp_xonly.public_key_hex.len(), 64);
+        // Verify xonly logic (even Y coordinate)
+        let sk = hex_to_scalar(&kp_xonly.private_key_hex).unwrap();
+        let pk = hex_to_point(&kp_xonly.public_key_hex).unwrap(); // hex_to_point assumes even Y for 64 len
+        let point = ProjectivePoint::GENERATOR * sk;
+        let affine = point.to_affine();
+        // If original Y was odd, generate_keypair_hex flips the scalar internally
+        // So, the point derived from the *returned* public key should always have even Y
+        assert!(
+            !bool::from(pk.to_affine().y_is_odd()),
+            "xonly pubkey should correspond to even Y"
+        );
+
+        // Invalid format (defaults to compressed)
+        let kp_invalid = generate_keypair_hex("invalid");
+        assert_eq!(kp_invalid.public_key_hex.len(), 66);
+        assert!(
+            kp_invalid.public_key_hex.starts_with("02")
+                || kp_invalid.public_key_hex.starts_with("03")
+        );
+    }
+
+    #[test]
+    fn test_generate_keypairs() {
+        let count = 5;
+        let keypairs = generate_keypairs(count, "xonly");
+        assert_eq!(keypairs.len(), count);
+        for kp in keypairs {
+            assert_eq!(kp.private_key_hex.len(), 64);
+            assert_eq!(kp.public_key_hex.len(), 64);
+        }
+    }
+
+    #[test]
+    fn test_get_public_keys() {
+        let keypairs = generate_keypairs(3, "compressed");
+        let pubkeys = get_public_keys(&keypairs);
+        assert_eq!(pubkeys.len(), 3);
+        assert_eq!(pubkeys[0], keypairs[0].public_key_hex);
+        assert_eq!(pubkeys[1], keypairs[1].public_key_hex);
+        assert_eq!(pubkeys[2], keypairs[2].public_key_hex);
+    }
+}

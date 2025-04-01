@@ -335,3 +335,144 @@ fn hash_for_blsag_challenge(
     let is_zero = scalar.ct_eq(&Scalar::ZERO);
     Ok(Scalar::conditional_select(&scalar, &Scalar::ONE, is_zero))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*; // Import items from parent module (blsag.rs)
+    use crate::keys::{generate_keypair_hex, generate_keypairs};
+    use crate::types::hex_to_scalar;
+    use crate::types::KeyImage;
+    use crate::utils::hex_to_point;
+    use k256::elliptic_curve::group::GroupEncoding;
+    use k256::{ProjectivePoint, Scalar};
+    use rand::rngs::OsRng;
+
+    // Helper to setup a ring and signer for tests
+    fn setup_blsag_test_ring(ring_size: usize) -> (Vec<ProjectivePoint>, Scalar, usize) {
+        let keypairs_hex = generate_keypairs(ring_size, "compressed");
+        let ring_pubkeys: Vec<ProjectivePoint> = keypairs_hex
+            .iter()
+            .map(|kp| hex_to_point(&kp.public_key_hex).unwrap())
+            .collect();
+        let signer_index = ring_size / 2;
+        let signer_priv = hex_to_scalar(&keypairs_hex[signer_index].private_key_hex).unwrap();
+        (ring_pubkeys, signer_priv, signer_index)
+    }
+
+    #[test]
+    fn test_hash_to_point_consistency() {
+        let point1 = ProjectivePoint::GENERATOR;
+        let point2 = ProjectivePoint::GENERATOR * Scalar::from(2u64);
+
+        let hash_point1 = hash_to_point(&point1).unwrap();
+        let hash_point2 = hash_to_point(&point1).unwrap(); // Call again with same input
+        assert_eq!(
+            hash_point1, hash_point2,
+            "hash_to_point should be deterministic"
+        );
+
+        let hash_point3 = hash_to_point(&point2).unwrap();
+        assert_ne!(
+            hash_point1, hash_point3,
+            "hash_to_point should differ for different inputs"
+        );
+
+        // Ensure it doesn't return identity
+        assert!(!bool::from(hash_point1.is_identity()));
+        assert!(!bool::from(hash_point3.is_identity()));
+
+        // Test hashing identity point (should error)
+        let result_identity = hash_to_point(&ProjectivePoint::IDENTITY);
+        assert!(matches!(result_identity, Err(Error::PublicKeyFormat(_))));
+    }
+
+    #[test]
+    fn test_hash_for_blsag_challenge_consistency() {
+        let message = b"blsag challenge test";
+        let point1 = ProjectivePoint::GENERATOR;
+        let point2 = ProjectivePoint::GENERATOR * Scalar::from(2u64);
+
+        let hash1 = hash_for_blsag_challenge(message, &point1, &point2).unwrap();
+        let hash2 = hash_for_blsag_challenge(message, &point1, &point2).unwrap();
+        assert_eq!(hash1, hash2, "Hashing should be deterministic");
+
+        let hash3 = hash_for_blsag_challenge(b"different msg", &point1, &point2).unwrap();
+        assert_ne!(hash1, hash3, "Hash should differ for different messages");
+
+        let hash4 = hash_for_blsag_challenge(message, &point2, &point1).unwrap(); // Swapped points
+        assert_ne!(
+            hash1, hash4,
+            "Hash should differ for different point order/values"
+        );
+    }
+
+    #[test]
+    fn test_sign_blsag_binary_errors() {
+        let (ring_pubkeys, signer_priv, _signer_index) = setup_blsag_test_ring(3);
+        let message = b"test blsag errors";
+
+        // Ring too small
+        let small_ring = vec![ring_pubkeys[0]];
+        let result_small = sign_blsag_binary(message, &signer_priv, &small_ring);
+        assert!(matches!(result_small, Err(Error::RingTooSmall(1))));
+
+        // Signer not in ring
+        let outsider_kp = generate_keypair_hex("compressed");
+        let outsider_priv = hex_to_scalar(&outsider_kp.private_key_hex).unwrap();
+        let result_outsider = sign_blsag_binary(message, &outsider_priv, &ring_pubkeys);
+        assert!(matches!(result_outsider, Err(Error::SignerNotInRing)));
+    }
+
+    #[test]
+    fn test_verify_blsag_binary_errors() {
+        let (ring_pubkeys, signer_priv, _signer_index) = setup_blsag_test_ring(3);
+        let message = b"test verify blsag errors";
+        let (signature, key_image) =
+            sign_blsag_binary(message, &signer_priv, &ring_pubkeys).unwrap();
+
+        // Empty ring
+        let result_empty = verify_blsag_binary(&signature, &key_image, message, &[]);
+        assert!(matches!(result_empty, Ok(false))); // Verification returns false
+
+        // Signature length mismatch
+        let mut short_signature = signature.clone();
+        short_signature.s.pop();
+        let result_short =
+            verify_blsag_binary(&short_signature, &key_image, message, &ring_pubkeys);
+        assert!(matches!(result_short, Err(Error::InvalidSignatureFormat)));
+
+        let mut long_signature = signature.clone();
+        long_signature.s.push(Scalar::ONE);
+        let result_long = verify_blsag_binary(&long_signature, &key_image, message, &ring_pubkeys);
+        assert!(matches!(result_long, Err(Error::InvalidSignatureFormat)));
+
+        // Verification failure (wrong message)
+        let result_wrong_msg =
+            verify_blsag_binary(&signature, &key_image, b"wrong message", &ring_pubkeys);
+        assert!(matches!(result_wrong_msg, Ok(false)));
+
+        // Verification failure (wrong ring)
+        let (ring2, _, _) = setup_blsag_test_ring(3);
+        let result_wrong_ring = verify_blsag_binary(&signature, &key_image, message, &ring2);
+        assert!(matches!(result_wrong_ring, Ok(false)));
+
+        // Verification failure (wrong key image)
+        // Generate KI from a *different signer* in the *original ring* to get a valid but incorrect KI
+        let (ring_pubkeys_for_wrong_ki, wrong_signer_priv, _) = setup_blsag_test_ring(3);
+        let (_, wrong_key_image) =
+            sign_blsag_binary(message, &wrong_signer_priv, &ring_pubkeys_for_wrong_ki).unwrap();
+        assert_ne!(
+            key_image, wrong_key_image,
+            "Key images should differ for test"
+        ); // Ensure KI is actually different
+        let result_wrong_ki =
+            verify_blsag_binary(&signature, &wrong_key_image, message, &ring_pubkeys);
+        assert!(matches!(result_wrong_ki, Ok(false)));
+
+        // Key Image is Identity Point (should fail)
+        let identity_key_image = KeyImage::from_point(ProjectivePoint::IDENTITY);
+        let result_identity_ki =
+            verify_blsag_binary(&signature, &identity_key_image, message, &ring_pubkeys);
+        assert!(matches!(result_identity_ki, Ok(false)));
+    }
+}

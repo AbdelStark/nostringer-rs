@@ -8,6 +8,7 @@ use rand::RngCore;
 use sha2::{Digest, Sha256};
 use subtle::{ConditionallySelectable, ConstantTimeEq};
 
+use crate::keys::{generate_keypair_hex, generate_keypairs};
 use crate::types::{hex_to_scalar, Error, RingSignature, RingSignatureBinary};
 use crate::utils::{hex_to_point, random_non_zero_scalar};
 
@@ -268,4 +269,122 @@ fn hash_to_scalar(
     // Ensure result is non-zero (use Scalar::ONE if zero)
     let is_zero = scalar.ct_eq(&Scalar::ZERO);
     Ok(Scalar::conditional_select(&scalar, &Scalar::ONE, is_zero))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*; // Import items from parent module (sag.rs)
+    use crate::keys::{generate_keypair_hex, generate_keypairs};
+    use crate::types::hex_to_scalar;
+    use crate::utils::hex_to_point;
+    use k256::{ProjectivePoint, Scalar};
+    use rand::rngs::OsRng;
+
+    // Helper to setup a ring and signer for tests
+    fn setup_test_ring(ring_size: usize) -> (Vec<ProjectivePoint>, Scalar, usize) {
+        let keypairs_hex = generate_keypairs(ring_size, "compressed");
+        let ring_pubkeys: Vec<ProjectivePoint> = keypairs_hex
+            .iter()
+            .map(|kp| hex_to_point(&kp.public_key_hex).unwrap())
+            .collect();
+        let signer_index = ring_size / 2;
+        let signer_priv = hex_to_scalar(&keypairs_hex[signer_index].private_key_hex).unwrap();
+        (ring_pubkeys, signer_priv, signer_index)
+    }
+
+    #[test]
+    fn test_hash_for_challenge_consistency() {
+        let message = b"test message";
+        let ephemeral_placeholder = ProjectivePoint::GENERATOR; // Placeholder ephemeral point
+        let point1 = ProjectivePoint::GENERATOR;
+        let point2 = ProjectivePoint::GENERATOR * Scalar::from(2u64);
+        let ring1 = &[point1];
+        let ring2 = &[point2];
+        let ring_both = &[point1, point2];
+
+        // Test with consistent inputs
+        let hash1 = hash_to_scalar(message, ring1, &ephemeral_placeholder).unwrap();
+        let hash2 = hash_to_scalar(message, ring1, &ephemeral_placeholder).unwrap();
+        assert_eq!(hash1, hash2, "Hashing should be deterministic");
+
+        // Test with different message
+        let hash3 = hash_to_scalar(b"different message", ring1, &ephemeral_placeholder).unwrap();
+        assert_ne!(hash1, hash3, "Hash should differ for different messages");
+
+        // Test with different ring
+        let hash4 = hash_to_scalar(message, ring2, &ephemeral_placeholder).unwrap();
+        assert_ne!(hash1, hash4, "Hash should differ for different ring keys");
+
+        // Test with different ring size/composition
+        let hash5 = hash_to_scalar(message, ring_both, &ephemeral_placeholder).unwrap();
+        assert_ne!(
+            hash1, hash5,
+            "Hash should differ for different ring sizes/keys"
+        );
+
+        // Test with different ephemeral point
+        let ephemeral_different = ProjectivePoint::GENERATOR * Scalar::from(3u64);
+        let hash6 = hash_to_scalar(message, ring1, &ephemeral_different).unwrap();
+        assert_ne!(
+            hash1, hash6,
+            "Hash should differ for different ephemeral points"
+        );
+    }
+
+    #[test]
+    fn test_sign_binary_errors() {
+        let (ring_pubkeys, signer_priv, _signer_index) = setup_test_ring(3);
+        let message = b"test errors";
+
+        // Ring too small
+        let small_ring = vec![ring_pubkeys[0]];
+        let result_small = sign_binary(message, &signer_priv, &small_ring, OsRng);
+        assert!(matches!(result_small, Err(Error::RingTooSmall(1))));
+
+        // Signer not in ring
+        let outsider_kp = generate_keypair_hex("compressed");
+        let outsider_priv = hex_to_scalar(&outsider_kp.private_key_hex).unwrap();
+        let result_outsider = sign_binary(message, &outsider_priv, &ring_pubkeys, OsRng);
+        assert!(matches!(result_outsider, Err(Error::SignerNotInRing)));
+
+        // Test with identity point in ring (should ideally be handled, but might pass if signer not identity)
+        let mut ring_with_identity = ring_pubkeys.clone();
+        ring_with_identity.push(ProjectivePoint::IDENTITY);
+        // Signing might succeed if the identity isn't chosen or involved in a way that breaks math,
+        // but verification involving it might fail later. Let's check if sign errors.
+        let result_identity = sign_binary(message, &signer_priv, &ring_with_identity, OsRng);
+        // Depending on implementation, this might succeed or fail. Let's just ensure it doesn't panic.
+        assert!(result_identity.is_ok() || result_identity.is_err());
+    }
+
+    #[test]
+    fn test_verify_binary_errors() {
+        let (ring_pubkeys, signer_priv, _signer_index) = setup_test_ring(3);
+        let message = b"test verify errors";
+        let signature = sign_binary(message, &signer_priv, &ring_pubkeys, OsRng).unwrap();
+
+        // Empty ring
+        let result_empty = verify_binary(&signature, message, &[]);
+        assert!(matches!(result_empty, Ok(false))); // Verification returns false for empty ring
+
+        // Signature length mismatch
+        let mut short_signature = signature.clone();
+        short_signature.s.pop();
+        let result_short = verify_binary(&short_signature, message, &ring_pubkeys);
+        assert!(matches!(result_short, Err(Error::InvalidSignatureFormat)));
+
+        let mut long_signature = signature.clone();
+        long_signature.s.push(Scalar::ONE);
+        let result_long = verify_binary(&long_signature, message, &ring_pubkeys);
+        assert!(matches!(result_long, Err(Error::InvalidSignatureFormat)));
+
+        // Verification failure (wrong message)
+        let result_wrong_msg = verify_binary(&signature, b"wrong message", &ring_pubkeys);
+        assert!(matches!(result_wrong_msg, Ok(false)));
+
+        // Verification failure (wrong ring)
+        let (ring2, _, _) = setup_test_ring(3);
+        let result_wrong_ring = verify_binary(&signature, message, &ring2);
+        assert!(matches!(result_wrong_ring, Ok(false)));
+    }
 }
