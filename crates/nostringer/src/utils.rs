@@ -1,4 +1,6 @@
-use k256::{NonZeroScalar, ProjectivePoint, PublicKey};
+use k256::elliptic_curve::PrimeField;
+use k256::{NonZeroScalar, ProjectivePoint, PublicKey, Scalar};
+use nostr::prelude::FromBech32;
 use rand::{CryptoRng, RngCore};
 
 use crate::types::{normalize_hex, Error};
@@ -76,4 +78,54 @@ pub fn hex_to_point(pubkey_hex: &str) -> Result<ProjectivePoint, Error> {
 /// A non-zero scalar value from the Secp256k1 field
 pub fn random_non_zero_scalar(mut rng: impl RngCore + CryptoRng) -> NonZeroScalar {
     NonZeroScalar::random(&mut rng)
+}
+
+/// Parses a secret key string (nsec or hex) into a k256 Scalar.
+///
+/// # Arguments
+/// * `key_input` - The secret key string (nsec1... or hex format).
+///
+/// # Returns
+/// * `Ok(Scalar)` - The secret key as a scalar.
+/// * `Err(Error)` - If parsing fails.
+pub fn parse_secret_key(key_input: &str) -> Result<Scalar, Error> {
+    if key_input.starts_with("nsec1") {
+        let sk = nostr::SecretKey::from_bech32(key_input)
+            .map_err(|e| Error::SecretKeyFormat(format!("Bech32 parse error: {}", e)))?;
+        // Convert [u8; 32] -> FieldBytes -> Option<Scalar>
+        let field_bytes = k256::FieldBytes::from(sk.to_secret_bytes());
+        let maybe_scalar = Scalar::from_repr_vartime(field_bytes);
+        if let Some(scalar) = maybe_scalar {
+            Ok(scalar)
+        } else {
+            // This case should be rare for valid keys but handles potential edge cases
+            Err(Error::InvalidScalarEncoding)
+        }
+    } else {
+        // Fallback to hex parsing
+        crate::types::hex_to_scalar(key_input)
+    }
+}
+
+/// Parses a public key string (npub or hex) into a k256 ProjectivePoint.
+///
+/// # Arguments
+/// * `key_input` - The public key string (npub1... or hex format).
+///
+/// # Returns
+/// * `Ok(ProjectivePoint)` - The public key as a curve point.
+/// * `Err(Error)` - If parsing fails.
+pub fn parse_public_key(key_input: &str) -> Result<ProjectivePoint, Error> {
+    if key_input.starts_with("npub1") {
+        let pk = nostr::PublicKey::from_bech32(key_input)
+            .map_err(|e| Error::PublicKeyFormat(format!("Bech32 parse error: {}", e)))?;
+        // nostr::PublicKey stores the x-only key. We need the full ProjectivePoint.
+        // k256::PublicKey::from_x_only cannot recover the full point reliably without context.
+        // Let's convert nostr::PublicKey -> hex -> k256::PublicKey -> ProjectivePoint
+        let hex_pk = pk.to_hex();
+        hex_to_point(&hex_pk) // Use existing hex parser which handles xonly/compressed/uncompressed
+    } else {
+        // Fallback to hex parsing
+        hex_to_point(key_input)
+    }
 }

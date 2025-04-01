@@ -32,6 +32,10 @@ pub enum Error {
     #[error("Invalid private key format: {0}")]
     PrivateKeyFormat(String),
 
+    /// Error in secret key format (e.g., invalid nsec)
+    #[error("Invalid secret key format: {0}")]
+    SecretKeyFormat(String),
+
     /// Error in public key format or validation
     #[error("Invalid public key format: {0}")]
     PublicKeyFormat(String),
@@ -71,6 +75,10 @@ pub enum Error {
     /// Serialization error from the serialization module
     #[error("Serialization error: {0}")]
     Serialization(String),
+
+    /// Error during key format conversion (e.g., bech32 encoding/decoding)
+    #[error("Nostr key error: {0}")]
+    NostrKeyError(#[from] nostr::key::Error),
 }
 
 /// A ring signature consisting of an initial commitment value c0 and a vector of s values
