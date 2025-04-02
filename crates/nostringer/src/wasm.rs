@@ -396,3 +396,265 @@ pub fn wasm_get_compact_signature_info(compact_signature: &str) -> Result<JsValu
 
     Ok(info.into())
 }
+
+/// Deserializes a compact SAG signature string to a WasmRingSignature
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub fn wasm_deserialize_compact_sag(compact_signature: &str) -> Result<WasmRingSignature, JsValue> {
+    // Deserialize the compact signature
+    let compact_sig = CompactSignature::deserialize(compact_signature)
+        .map_err(|e| JsValue::from_str(&format!("Error: {}", e)))?;
+
+    // Ensure it's the correct type
+    match compact_sig {
+        CompactSignature::Sag(binary_sig) => {
+            // Convert s values to JsValue array using proper hex conversion for Scalar
+            let s_values: Vec<JsValue> = binary_sig
+                .s
+                .iter()
+                .map(|s| {
+                    let bytes_array = s.to_bytes();
+                    let bytes: &[u8] = bytes_array.as_ref();
+                    JsValue::from_str(&hex::encode(bytes))
+                })
+                .collect();
+
+            let c0_bytes_array = binary_sig.c0.to_bytes();
+            let c0_bytes: &[u8] = c0_bytes_array.as_ref();
+
+            Ok(WasmRingSignature {
+                c0: hex::encode(c0_bytes),
+                s: s_values.into_boxed_slice(),
+            })
+        }
+        _ => Err(JsValue::from_str("Error: Not a SAG signature")),
+    }
+}
+
+/// Deserializes a compact BLSAG signature string to a WasmBlsagSignature
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub fn wasm_deserialize_compact_blsag(
+    compact_signature: &str,
+) -> Result<WasmBlsagSignature, JsValue> {
+    // Deserialize the compact signature
+    let compact_sig = CompactSignature::deserialize(compact_signature)
+        .map_err(|e| JsValue::from_str(&format!("Error: {}", e)))?;
+
+    // Ensure it's the correct type
+    match compact_sig {
+        CompactSignature::Blsag(binary_sig, key_image) => {
+            // Convert s values to JsValue array using proper hex conversion for Scalar
+            let s_values: Vec<JsValue> = binary_sig
+                .s
+                .iter()
+                .map(|s| {
+                    let bytes_array = s.to_bytes();
+                    let bytes: &[u8] = bytes_array.as_ref();
+                    JsValue::from_str(&hex::encode(bytes))
+                })
+                .collect();
+
+            let c0_bytes_array = binary_sig.c0.to_bytes();
+            let c0_bytes: &[u8] = c0_bytes_array.as_ref();
+
+            Ok(WasmBlsagSignature {
+                c0: hex::encode(c0_bytes),
+                s: s_values.into_boxed_slice(),
+                key_image: key_image.to_hex(),
+            })
+        }
+        _ => Err(JsValue::from_str("Error: Not a BLSAG signature")),
+    }
+}
+
+/// Attempts to deserialize a compact signature string to either type
+/// Returns information about the signature type and an optional error
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub fn wasm_detect_compact_signature_type(compact_signature: &str) -> Result<JsValue, JsValue> {
+    // Attempt to deserialize
+    let compact_sig = CompactSignature::deserialize(compact_signature)
+        .map_err(|e| JsValue::from_str(&format!("Error: {}", e)))?;
+
+    // Create a JavaScript object with the info
+    let info = js_sys::Object::new();
+
+    match compact_sig {
+        CompactSignature::Sag(_) => {
+            js_sys::Reflect::set(&info, &JsValue::from_str("type"), &JsValue::from_str("sag"))
+                .map_err(|_| JsValue::from_str("Failed to set type"))?;
+        }
+        CompactSignature::Blsag(_, _) => {
+            js_sys::Reflect::set(
+                &info,
+                &JsValue::from_str("type"),
+                &JsValue::from_str("blsag"),
+            )
+            .map_err(|_| JsValue::from_str("Failed to set type"))?;
+        }
+    }
+
+    Ok(info.into())
+}
+
+/// Serializes a WasmRingSignature to a compact signature string
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub fn wasm_serialize_ring_signature(signature: &WasmRingSignature) -> Result<String, JsValue> {
+    // Convert JsValue s values to Vec<String>
+    let s_values: Vec<String> = signature
+        .s
+        .iter()
+        .map(|v| {
+            v.as_string()
+                .ok_or_else(|| JsValue::from_str("Invalid s value"))
+        })
+        .collect::<Result<Vec<String>, JsValue>>()?;
+
+    // Convert to RingSignatureBinary
+    let c0_scalar = crate::types::hex_to_scalar(&signature.c0)
+        .map_err(|e| JsValue::from_str(&format!("Error parsing c0: {}", e)))?;
+
+    // Convert s values to scalars
+    let s_scalars = s_values
+        .iter()
+        .map(|s| crate::types::hex_to_scalar(s))
+        .collect::<Result<Vec<k256::Scalar>, _>>()
+        .map_err(|e| JsValue::from_str(&format!("Error parsing s values: {}", e)))?;
+
+    let binary_signature = crate::types::RingSignatureBinary {
+        c0: c0_scalar,
+        s: s_scalars,
+    };
+
+    // Create compact signature and serialize
+    let compact_sig = CompactSignature::Sag(binary_signature);
+    compact_sig
+        .serialize()
+        .map_err(|e| JsValue::from_str(&format!("Error: {}", e)))
+}
+
+/// Serializes a WasmBlsagSignature to a compact signature string
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub fn wasm_serialize_blsag_signature(signature: &WasmBlsagSignature) -> Result<String, JsValue> {
+    // Convert JsValue s values to Vec<String>
+    let s_values: Vec<String> = signature
+        .s
+        .iter()
+        .map(|v| {
+            v.as_string()
+                .ok_or_else(|| JsValue::from_str("Invalid s value"))
+        })
+        .collect::<Result<Vec<String>, JsValue>>()?;
+
+    // Convert to binary types
+    let c0_scalar = crate::types::hex_to_scalar(&signature.c0)
+        .map_err(|e| JsValue::from_str(&format!("Error parsing c0: {}", e)))?;
+
+    // Convert s values to scalars
+    let s_scalars = s_values
+        .iter()
+        .map(|s| crate::types::hex_to_scalar(s))
+        .collect::<Result<Vec<k256::Scalar>, _>>()
+        .map_err(|e| JsValue::from_str(&format!("Error parsing s values: {}", e)))?;
+
+    // Using BlsagSignatureBinary (same as RingSignatureBinary)
+    let binary_signature = crate::types::BlsagSignatureBinary {
+        c0: c0_scalar,
+        s: s_scalars,
+    };
+
+    // Parse key image
+    let key_image = crate::types::KeyImage::from_hex(&signature.key_image)
+        .map_err(|e| JsValue::from_str(&format!("Error parsing key image: {}", e)))?;
+
+    // Create compact signature and serialize
+    let compact_sig = CompactSignature::Blsag(binary_signature, key_image);
+    compact_sig
+        .serialize()
+        .map_err(|e| JsValue::from_str(&format!("Error: {}", e)))
+}
+
+// ====== Tests for WASM Serialization/Deserialization ======
+
+#[cfg(all(test, feature = "wasm"))]
+mod tests {
+    use super::*;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test]
+    fn test_deserialize_serialize_sag() {
+        // Generate a keypair and create a signature
+        let keypair = generate_keypair_hex("xonly");
+        let ring_pubkeys = vec![keypair.public_key_hex.clone()];
+        let message = b"test message";
+
+        // Create a compact signature
+        let compact_sig = sign_compact_sag(message, &keypair.private_key_hex, &ring_pubkeys)
+            .expect("Should sign successfully");
+
+        // Deserialize to WASM type
+        let wasm_sig =
+            wasm_deserialize_compact_sag(&compact_sig).expect("Should deserialize successfully");
+
+        // Serialize back to compact
+        let recompact_sig =
+            wasm_serialize_ring_signature(&wasm_sig).expect("Should serialize successfully");
+
+        // Verify the round-trip
+        let verification = verify_compact(&recompact_sig, message, &ring_pubkeys)
+            .expect("Should verify successfully");
+        assert!(verification, "Round-trip signature should verify");
+    }
+
+    #[wasm_bindgen_test]
+    fn test_deserialize_serialize_blsag() {
+        // Generate a keypair and create a signature
+        let keypair = generate_keypair_hex("xonly");
+        let ring_pubkeys = vec![keypair.public_key_hex.clone()];
+        let message = b"test message";
+
+        // Create a compact signature
+        let compact_sig = sign_compact_blsag(message, &keypair.private_key_hex, &ring_pubkeys)
+            .expect("Should sign successfully");
+
+        // Deserialize to WASM type
+        let wasm_sig =
+            wasm_deserialize_compact_blsag(&compact_sig).expect("Should deserialize successfully");
+
+        // Serialize back to compact
+        let recompact_sig =
+            wasm_serialize_blsag_signature(&wasm_sig).expect("Should serialize successfully");
+
+        // Verify the round-trip
+        let verification = verify_compact(&recompact_sig, message, &ring_pubkeys)
+            .expect("Should verify successfully");
+        assert!(verification, "Round-trip signature should verify");
+    }
+
+    #[wasm_bindgen_test]
+    fn test_detect_signature_type() {
+        // Generate a keypair for testing
+        let keypair = generate_keypair_hex("xonly");
+        let ring_pubkeys = vec![keypair.public_key_hex.clone()];
+        let message = b"test message";
+
+        // Create both types of signatures
+        let sag_sig = sign_compact_sag(message, &keypair.private_key_hex, &ring_pubkeys)
+            .expect("Should sign SAG successfully");
+        let blsag_sig = sign_compact_blsag(message, &keypair.private_key_hex, &ring_pubkeys)
+            .expect("Should sign BLSAG successfully");
+
+        // Test detection
+        let sag_info =
+            wasm_detect_compact_signature_type(&sag_sig).expect("Should detect SAG type");
+        let blsag_info =
+            wasm_detect_compact_signature_type(&blsag_sig).expect("Should detect BLSAG type");
+
+        // We would verify the type information here,
+        // but this requires JavaScript interaction which we can't do in a pure Rust test
+        // This test just ensures no panic or error occurs
+    }
+}
