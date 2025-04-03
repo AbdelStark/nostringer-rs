@@ -288,7 +288,6 @@ fn hash_to_point(pubkey: &ProjectivePoint) -> Result<ProjectivePoint, Error> {
         // Try even Y (0x02 prefix)
         potential_point_bytes[0] = 0x02;
         if let Ok(pk) = PublicKey::from_sec1_bytes(&potential_point_bytes) {
-            // Check if the resulting point is identity (should be avoided)
             let point = pk.to_projective();
             if !bool::from(point.is_identity()) {
                 return Ok(point);
@@ -298,7 +297,6 @@ fn hash_to_point(pubkey: &ProjectivePoint) -> Result<ProjectivePoint, Error> {
         // Try odd Y (0x03 prefix)
         potential_point_bytes[0] = 0x03;
         if let Ok(pk) = PublicKey::from_sec1_bytes(&potential_point_bytes) {
-            // Check if the resulting point is identity
             let point = pk.to_projective();
             if !bool::from(point.is_identity()) {
                 return Ok(point);

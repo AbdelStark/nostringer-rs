@@ -232,10 +232,8 @@ fn hash_to_scalar(
     ring_pubkeys: &[ProjectivePoint], // Accepts binary points directly
     ephemeral_point: &ProjectivePoint,
 ) -> Result<Scalar, Error> {
-    // Initialize hasher
     let mut hasher = Sha256::new();
 
-    // Hash the message
     hasher.update(message);
 
     // Hash all public keys in the ring (binary, compressed)
@@ -258,10 +256,8 @@ fn hash_to_scalar(
     let ephemeral_compressed = ephemeral_point.to_encoded_point(true);
     hasher.update(ephemeral_compressed.as_bytes());
 
-    // Finalize hash
     let hash_result = hasher.finalize();
 
-    // Convert hash to a scalar
     let hash_uint = U256::from_be_slice(&hash_result);
     let scalar = Scalar::reduce(hash_uint);
 
