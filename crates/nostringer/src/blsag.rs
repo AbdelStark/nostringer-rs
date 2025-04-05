@@ -27,7 +27,7 @@ pub fn sign_blsag_hex(
         .map(|s| hex_to_point(s))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let flag = linkability_flag.as_ref().map(|s| s.as_bytes()).or_else(|| {
+    let flag = linkability_flag.as_ref().map(|s| s.as_bytes()).or({
         // Default to None if no flag is provided
         None
     });
@@ -215,10 +215,8 @@ pub fn verify_blsag_binary(
     // --- Standard Ring Verification (adapted for bLSAG hashing) ---
     let c0_scalar = signature.c0;
     let r_scalars = &signature.s;
-    let linkability_flag = match &signature.linkability_flag {
-        Some(flag) => Some(flag.as_slice()),
-        None => None,
-    };
+    let linkability_flag = signature.linkability_flag.as_deref();
+
     // Temporary array to store recalculated challenges
     let mut c_recalculated = vec![Scalar::ZERO; ring_size];
 
