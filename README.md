@@ -386,9 +386,14 @@ The repository includes several examples that demonstrate different aspects of t
 
 3. **BLSAG Linkability** (`examples/blsag_linkability.rs`): Demonstrates the linkable BLSAG variant and how to detect when the same key is used for multiple signatures.
 
-   ```bash
-   cargo run --example blsag_linkability
-   ```
+   - Global linkability:
+     ```bash
+     cargo run --example blsag_linkability
+     ```
+   - Local linkability:
+     ```bash
+     cargo run --example blsag_local_linkability
+     ```
 
 4. **Error Handling** (`examples/error_handling.rs`): Demonstrates proper error handling for common error scenarios.
 
