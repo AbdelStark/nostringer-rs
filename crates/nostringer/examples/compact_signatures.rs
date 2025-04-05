@@ -3,7 +3,8 @@ use nostringer::{
     sign_compact_blsag,
     sign_compact_sag,
     verify_compact,
-    CompactSignature, SignatureVariant, // Re-exported from serialization
+    CompactSignature,
+    SignatureVariant, // Re-exported from serialization
 };
 
 fn main() -> Result<(), nostringer::Error> {
@@ -70,7 +71,7 @@ fn main() -> Result<(), nostringer::Error> {
         message2,
         &keypair2.private_key_hex, // Same signer as before
         &ring_pubkeys_hex,
-        &SignatureVariant::Blsag
+        &SignatureVariant::Blsag,
     )?;
 
     // Display the compact signature

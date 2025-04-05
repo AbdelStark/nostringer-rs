@@ -43,10 +43,11 @@ fn main() -> Result<(), Error> {
     // 3. Create a linkability flag specific to our context (optional)
     let linkability_flag = None;
     println!("\n{}", "3. Linkability flag".bold());
-    println!("   In this example, we are using the global linkability. For real-world applications,");
+    println!(
+        "   In this example, we are using the global linkability. For real-world applications,"
+    );
     println!("   you can create a linkability flag specific to your context.");
     println!("   (see the blsag_local_linkability.rs example)");
-
 
     // 4. Sign two different messages with the same key
     println!(

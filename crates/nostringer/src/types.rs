@@ -254,7 +254,10 @@ impl TryFrom<&BlsagSignature> for BlsagSignatureBinary {
             .iter()
             .map(|s_hex| hex_to_scalar(s_hex))
             .collect::<Result<Vec<Scalar>, Error>>()?;
-        let linkability_flag = sig.linkability_flag.as_ref().map(|flag| flag.as_bytes().to_vec());
+        let linkability_flag = sig
+            .linkability_flag
+            .as_ref()
+            .map(|flag| flag.as_bytes().to_vec());
 
         Ok(BlsagSignatureBinary {
             c0,

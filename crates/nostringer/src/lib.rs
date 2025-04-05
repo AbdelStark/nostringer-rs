@@ -276,7 +276,8 @@ pub fn sign_compact_blsag(
     };
 
     // Perform binary signing
-    let (binary_sig, key_image) = blsag::sign_blsag_binary(message, &private_key, &ring_pubkeys, &linkability_flag)?;
+    let (binary_sig, key_image) =
+        blsag::sign_blsag_binary(message, &private_key, &ring_pubkeys, &linkability_flag)?;
 
     // Wrap and serialize
     let compact_sig = CompactSignature::Blsag(binary_sig, key_image);

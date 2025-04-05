@@ -327,7 +327,6 @@ fn test_blsag_global_linkability() {
     assert!(!key_images_match(&ki1, &ki3));
 }
 
-
 #[test]
 fn test_blsag_local_linkability() {
     // 1. Setup

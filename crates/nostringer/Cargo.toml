@@ -28,6 +28,7 @@ console_error_panic_hook = { version = "0.1.7", optional = true }
 serde_bytes = "0.11.17"
 nostr = "0.40.0"
 serde_json = "1.0.140"
+zerocopy = "0.8.24"
 
 [dev-dependencies]
 criterion = { version = "0.4", features = ["html_reports"] }
