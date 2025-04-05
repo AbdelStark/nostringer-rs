@@ -40,10 +40,18 @@ fn main() -> Result<(), Error> {
     println!("   Selected Ring Member {} as the signer", signer_index + 1);
     println!("   Note: Other ring members cannot tell which member is signing!");
 
-    // 3. Sign two different messages with the same key
+    // 3. Create a linkability flag specific to our context (optional)
+    let linkability_flag = Some("blsag_linkability_example".to_string());
+    println!("\n{}", "3. Creating a linkability flag (optional)".bold());
+    println!(
+        "   Linkability flag: {}",
+        linkability_flag.clone().unwrap_or("None".to_string()).bright_blue()
+    );
+
+    // 4. Sign two different messages with the same key
     println!(
         "\n{}",
-        "3. Signing two different messages with the same private key".bold()
+        "4. Signing two different messages with the same private key".bold()
     );
 
     let message1 = b"First vote: Approve proposal A";
@@ -52,8 +60,12 @@ fn main() -> Result<(), Error> {
         std::str::from_utf8(message1).unwrap().green()
     );
 
-    let (signature1, key_image1_hex) =
-        sign_blsag_hex(message1, &signer_keypair.private_key_hex, &ring_pubkeys)?;
+    let (signature1, key_image1_hex) = sign_blsag_hex(
+        message1,
+        &signer_keypair.private_key_hex,
+        &ring_pubkeys,
+        &linkability_flag,
+    )?;
 
     let key_image1 = KeyImage::from_hex(&key_image1_hex)?;
     println!(
@@ -79,8 +91,12 @@ fn main() -> Result<(), Error> {
         std::str::from_utf8(message2).unwrap().green()
     );
 
-    let (signature2, key_image2_hex) =
-        sign_blsag_hex(message2, &signer_keypair.private_key_hex, &ring_pubkeys)?;
+    let (signature2, key_image2_hex) = sign_blsag_hex(
+        message2,
+        &signer_keypair.private_key_hex,
+        &ring_pubkeys,
+        &linkability_flag,
+    )?;
 
     let key_image2 = KeyImage::from_hex(&key_image2_hex)?;
     println!(
@@ -99,10 +115,10 @@ fn main() -> Result<(), Error> {
         }
     );
 
-    // 4. Sign a third message with a different ring member
+    // 5. Sign a third message with a different ring member
     println!(
         "\n{}",
-        "4. Signing a third message with a DIFFERENT private key".bold()
+        "5. Signing a third message with a DIFFERENT private key".bold()
     );
 
     let different_signer_index = 4; // Use a different member
@@ -115,8 +131,12 @@ fn main() -> Result<(), Error> {
     );
     println!("   Signing with Ring Member {}", different_signer_index + 1);
 
-    let (signature3, key_image3_hex) =
-        sign_blsag_hex(message3, &different_signer.private_key_hex, &ring_pubkeys)?;
+    let (signature3, key_image3_hex) = sign_blsag_hex(
+        message3,
+        &different_signer.private_key_hex,
+        &ring_pubkeys,
+        &linkability_flag,
+    )?;
 
     let key_image3 = KeyImage::from_hex(&key_image3_hex)?;
     println!(
@@ -135,10 +155,10 @@ fn main() -> Result<(), Error> {
         }
     );
 
-    // 5. Compare key images to detect same signer
+    // 6. Compare key images to detect same signer
     println!(
         "\n{}",
-        "5. Detecting same signer through key image comparison".bold()
+        "6. Detecting same signer through key image comparison".bold()
     );
 
     let same_key_used_1_2 = key_images_match(&key_image1, &key_image2);

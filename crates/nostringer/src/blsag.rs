@@ -19,6 +19,7 @@ pub fn sign_blsag_hex(
     message: &[u8],
     private_key_hex: &str,
     ring_pubkeys_hex: &[String],
+    linkability_flag: &Option<String>,
 ) -> Result<(BlsagSignature, String), Error> {
     let private_key = hex_to_scalar(private_key_hex)?;
     let ring_pubkeys: Vec<ProjectivePoint> = ring_pubkeys_hex
@@ -26,7 +27,12 @@ pub fn sign_blsag_hex(
         .map(|s| hex_to_point(s))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let (binary_sig, key_image) = sign_blsag_binary(message, &private_key, &ring_pubkeys)?;
+    let flag = linkability_flag.as_ref().map(|s| s.as_bytes()).or_else(|| {
+        // Default to None if no flag is provided
+        None
+    });
+
+    let (binary_sig, key_image) = sign_blsag_binary(message, &private_key, &ring_pubkeys, &flag)?;
 
     Ok((BlsagSignature::from(&binary_sig), key_image.to_hex()))
 }
@@ -67,6 +73,7 @@ pub fn sign_blsag_binary(
     message: &[u8],
     private_key: &Scalar,
     ring_pubkeys: &[ProjectivePoint],
+    linkability_flag: &Option<&[u8]>,
 ) -> Result<(BlsagSignatureBinary, KeyImage), Error> {
     let ring_size = ring_pubkeys.len();
     if ring_size < 2 {
@@ -105,7 +112,7 @@ pub fn sign_blsag_binary(
 
     // --- bLSAG Specific ---
     // 1. Calculate Key Image
-    let hp_p_signer = hash_to_point(p_signer)?;
+    let hp_p_signer = hash_to_point(p_signer, linkability_flag)?;
     let key_image_point = hp_p_signer * used_d; // I = used_d * Hp(P_signer)
     let key_image = KeyImage(key_image_point);
 
@@ -132,7 +139,7 @@ pub fn sign_blsag_binary(
         r_scalars[current_index] = *r_nonzero.as_ref();
 
         let p_i = &ring_pubkeys[current_index];
-        let hp_p_i = hash_to_point(p_i)?;
+        let hp_p_i = hash_to_point(p_i, linkability_flag)?;
 
         // Calculate commitments L0, L1 for this index's challenge hash
         // Li0 = r_i * G + c_i * P_i
@@ -155,6 +162,7 @@ pub fn sign_blsag_binary(
     let signature = BlsagSignatureBinary {
         c0: c_scalars[0],
         s: r_scalars,
+        linkability_flag: linkability_flag.map(|f| f.to_vec()),
     };
 
     Ok((signature, key_image))
@@ -207,6 +215,10 @@ pub fn verify_blsag_binary(
     // --- Standard Ring Verification (adapted for bLSAG hashing) ---
     let c0_scalar = signature.c0;
     let r_scalars = &signature.s;
+    let linkability_flag = match &signature.linkability_flag {
+        Some(flag) => Some(flag.as_slice()),
+        None => None,
+    };
     // Temporary array to store recalculated challenges
     let mut c_recalculated = vec![Scalar::ZERO; ring_size];
 
@@ -215,7 +227,7 @@ pub fn verify_blsag_binary(
 
     for i in 0..ring_size {
         let p_i = &ring_pubkeys[i];
-        let hp_p_i = hash_to_point(p_i)?;
+        let hp_p_i = hash_to_point(p_i, &linkability_flag)?;
 
         // Recalculate L0, L1 for this index
         // Li0 = r_i * G + c_i * P_i
@@ -257,7 +269,10 @@ pub fn key_images_match(image1: &KeyImage, image2: &KeyImage) -> bool {
 
 /// Hashes a public key point to another point on the curve (`Hp` function).
 /// Uses SHA-256 and try-and-increment to find a valid point.
-fn hash_to_point(pubkey: &ProjectivePoint) -> Result<ProjectivePoint, Error> {
+fn hash_to_point(
+    pubkey: &ProjectivePoint,
+    linkability_flag: &Option<&[u8]>,
+) -> Result<ProjectivePoint, Error> {
     if pubkey.is_identity().into() {
         // Hashing the identity point is usually undefined or undesirable
         return Err(Error::PublicKeyFormat("Cannot hash identity point".into()));
@@ -266,7 +281,10 @@ fn hash_to_point(pubkey: &ProjectivePoint) -> Result<ProjectivePoint, Error> {
     let mut hasher = Sha256::new();
     hasher.update(compressed_pubkey.as_bytes());
     // Use a domain separator for hashing to a point vs hashing for challenges
-    hasher.update(b"NostringerHp"); // Simple domain separation
+    match linkability_flag {
+        Some(flag) => hasher.update(flag),
+        None => {} // No additional domain separator
+    }
     let mut hash = hasher.finalize(); // GenericArray<u8, 32>
 
     let mut counter: u32 = 0;
@@ -362,14 +380,14 @@ mod tests {
         let point1 = ProjectivePoint::GENERATOR;
         let point2 = ProjectivePoint::GENERATOR * Scalar::from(2u64);
 
-        let hash_point1 = hash_to_point(&point1).unwrap();
-        let hash_point2 = hash_to_point(&point1).unwrap(); // Call again with same input
+        let hash_point1 = hash_to_point(&point1, &None).unwrap();
+        let hash_point2 = hash_to_point(&point1, &None).unwrap(); // Call again with same input
         assert_eq!(
             hash_point1, hash_point2,
             "hash_to_point should be deterministic"
         );
 
-        let hash_point3 = hash_to_point(&point2).unwrap();
+        let hash_point3 = hash_to_point(&point2, &None).unwrap();
         assert_ne!(
             hash_point1, hash_point3,
             "hash_to_point should differ for different inputs"
@@ -380,7 +398,7 @@ mod tests {
         assert!(!bool::from(hash_point3.is_identity()));
 
         // Test hashing identity point (should error)
-        let result_identity = hash_to_point(&ProjectivePoint::IDENTITY);
+        let result_identity = hash_to_point(&ProjectivePoint::IDENTITY, &None);
         assert!(matches!(result_identity, Err(Error::PublicKeyFormat(_))));
     }
 
@@ -408,16 +426,18 @@ mod tests {
     fn test_sign_blsag_binary_errors() {
         let (ring_pubkeys, signer_priv, _signer_index) = setup_blsag_test_ring(3);
         let message = b"test blsag errors";
+        let linkability_flag = None; // No linkability flag for this test
 
         // Ring too small
         let small_ring = vec![ring_pubkeys[0]];
-        let result_small = sign_blsag_binary(message, &signer_priv, &small_ring);
+        let result_small = sign_blsag_binary(message, &signer_priv, &small_ring, &linkability_flag);
         assert!(matches!(result_small, Err(Error::RingTooSmall(1))));
 
         // Signer not in ring
         let outsider_kp = generate_keypair_hex("compressed");
         let outsider_priv = hex_to_scalar(&outsider_kp.private_key_hex).unwrap();
-        let result_outsider = sign_blsag_binary(message, &outsider_priv, &ring_pubkeys);
+        let result_outsider =
+            sign_blsag_binary(message, &outsider_priv, &ring_pubkeys, &linkability_flag);
         assert!(matches!(result_outsider, Err(Error::SignerNotInRing)));
     }
 
@@ -425,8 +445,9 @@ mod tests {
     fn test_verify_blsag_binary_errors() {
         let (ring_pubkeys, signer_priv, _signer_index) = setup_blsag_test_ring(3);
         let message = b"test verify blsag errors";
+        let linkability_flag = None; // No linkability flag for this test
         let (signature, key_image) =
-            sign_blsag_binary(message, &signer_priv, &ring_pubkeys).unwrap();
+            sign_blsag_binary(message, &signer_priv, &ring_pubkeys, &linkability_flag).unwrap();
 
         // Empty ring
         let result_empty = verify_blsag_binary(&signature, &key_image, message, &[]);
@@ -457,8 +478,13 @@ mod tests {
         // Verification failure (wrong key image)
         // Generate KI from a *different signer* in the *original ring* to get a valid but incorrect KI
         let (ring_pubkeys_for_wrong_ki, wrong_signer_priv, _) = setup_blsag_test_ring(3);
-        let (_, wrong_key_image) =
-            sign_blsag_binary(message, &wrong_signer_priv, &ring_pubkeys_for_wrong_ki).unwrap();
+        let (_, wrong_key_image) = sign_blsag_binary(
+            message,
+            &wrong_signer_priv,
+            &ring_pubkeys_for_wrong_ki,
+            &linkability_flag,
+        )
+        .unwrap();
         assert_ne!(
             key_image, wrong_key_image,
             "Key images should differ for test"

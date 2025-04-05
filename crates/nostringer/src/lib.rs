@@ -132,8 +132,8 @@ pub fn sign(
 ) -> Result<String, Error> {
     match variant {
         SignatureVariant::Sag => sign_compact_sag(message, private_key_input, ring_pubkeys_input),
-        SignatureVariant::Blsag => {
-            sign_compact_blsag(message, private_key_input, ring_pubkeys_input)
+        SignatureVariant::Blsag | SignatureVariant::BlsagWithFlag(_) => {
+            sign_compact_blsag(message, private_key_input, ring_pubkeys_input, &variant)
         }
     }
 }
@@ -259,6 +259,7 @@ pub fn sign_compact_blsag(
     message: &[u8],
     private_key_input: &str,
     ring_pubkeys_input: &[String],
+    signature_variant: &SignatureVariant,
 ) -> Result<String, Error> {
     // Parse the private key (hex or nsec)
     let private_key = utils::parse_secret_key(private_key_input)?;
@@ -269,8 +270,13 @@ pub fn sign_compact_blsag(
         .map(|pubkey_str| utils::parse_public_key(pubkey_str))
         .collect::<Result<_, _>>()?;
 
+    let linkability_flag = match signature_variant {
+        SignatureVariant::BlsagWithFlag(flag) => Some(flag.as_bytes()),
+        _ => None,
+    };
+
     // Perform binary signing
-    let (binary_sig, key_image) = blsag::sign_blsag_binary(message, &private_key, &ring_pubkeys)?;
+    let (binary_sig, key_image) = blsag::sign_blsag_binary(message, &private_key, &ring_pubkeys, &linkability_flag)?;
 
     // Wrap and serialize
     let compact_sig = CompactSignature::Blsag(binary_sig, key_image);
