@@ -42,6 +42,9 @@ jobs:
       - name: Run blsag_linkability example
         run: cargo run --example blsag_linkability
 
+      - name: Run blsag_local_linkability example
+        run: cargo run --example blsag_local_linkability
+
       - name: Run error_handling example
         run: cargo run --example error_handling
 

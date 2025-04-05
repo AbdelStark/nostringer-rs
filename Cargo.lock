@@ -984,6 +984,7 @@ dependencies = [
  "thiserror",
  "wasm-bindgen",
  "wasm-bindgen-test",
+ "zerocopy",
 ]
 
 [[package]]
