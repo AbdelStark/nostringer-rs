@@ -41,12 +41,12 @@ fn main() -> Result<(), Error> {
     println!("   Note: Other ring members cannot tell which member is signing!");
 
     // 3. Create a linkability flag specific to our context (optional)
-    let linkability_flag = Some("blsag_linkability_example".to_string());
-    println!("\n{}", "3. Creating a linkability flag (optional)".bold());
-    println!(
-        "   Linkability flag: {}",
-        linkability_flag.clone().unwrap_or("None".to_string()).bright_blue()
-    );
+    let linkability_flag = None;
+    println!("\n{}", "3. Linkability flag".bold());
+    println!("   In this example, we are using the global linkability. For real-world applications,");
+    println!("   you can create a linkability flag specific to your context.");
+    println!("   (see the blsag_local_linkability.rs example)");
+
 
     // 4. Sign two different messages with the same key
     println!(
