@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::utils::hex_to_point;
 
 /// Defines the type of ring signature to create
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SignatureVariant {
     /// Standard Spontaneous Anonymous Group (SAG) signature
     /// Provides unlinkability (no way to tell if two signatures came from the same signer)
@@ -19,6 +19,12 @@ pub enum SignatureVariant {
     /// Produces a key image that allows detecting when the same key signs multiple times
     /// Still preserves anonymity (doesn't reveal which specific ring member is the signer)
     Blsag,
+
+    /// Back's Linkable Spontaneous Anonymous Group (BLSAG) signature
+    /// Produces a key image that allows detecting when the same key signs multiple times
+    /// with this specific flag
+    /// Still preserves anonymity (doesn't reveal which specific ring member is the signer)
+    BlsagWithFlag(String),
 }
 
 /// Errors that can occur during ring signature operations
@@ -202,6 +208,8 @@ pub struct BlsagSignatureBinary {
     pub c0: Scalar,
     /// Vector of response scalars (s_i).
     pub s: Vec<Scalar>,
+    /// Optional linkability flag to customize the key image to a specific domain.
+    pub linkability_flag: Option<Vec<u8>>,
 }
 
 /// Hex representation of a bLSAG signature (linkable).
@@ -212,6 +220,8 @@ pub struct BlsagSignature {
     pub c0: String,
     /// Vector of response scalars (s_i) encoded as hex.
     pub s: Vec<String>,
+    /// Optional linkability flag to customize the key image to a specific domain.
+    pub linkability_flag: Option<String>,
 }
 
 // --- Conversions for bLSAG Signatures ---
@@ -221,6 +231,16 @@ impl From<&BlsagSignatureBinary> for BlsagSignature {
         BlsagSignature {
             c0: scalar_to_hex(&binary.c0),
             s: binary.s.iter().map(scalar_to_hex).collect(),
+            linkability_flag: match &binary.linkability_flag {
+                Some(flag) => {
+                    // convert Vec<u8> to String
+                    match String::from_utf8(flag.clone()) {
+                        Ok(s) => Some(s),
+                        Err(e) => panic!("Failed to convert linkability flag to String: {}", e),
+                    }
+                }
+                None => None,
+            },
         }
     }
 }
@@ -234,7 +254,16 @@ impl TryFrom<&BlsagSignature> for BlsagSignatureBinary {
             .iter()
             .map(|s_hex| hex_to_scalar(s_hex))
             .collect::<Result<Vec<Scalar>, Error>>()?;
-        Ok(BlsagSignatureBinary { c0, s })
+        let linkability_flag = sig
+            .linkability_flag
+            .as_ref()
+            .map(|flag| flag.as_bytes().to_vec());
+
+        Ok(BlsagSignatureBinary {
+            c0,
+            s,
+            linkability_flag,
+        })
     }
 }
 
@@ -462,6 +491,7 @@ mod tests {
         let binary_sig = BlsagSignatureBinary {
             c0: Scalar::from(4u64),
             s: vec![Scalar::from(5u64), Scalar::from(6u64)],
+            linkability_flag: Some("flag".as_bytes().to_vec()),
         };
 
         let hex_sig: BlsagSignature = (&binary_sig).into();

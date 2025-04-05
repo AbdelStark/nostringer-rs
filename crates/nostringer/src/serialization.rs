@@ -31,6 +31,9 @@ struct SerializedSignatureData {
     /// Key image (33 bytes compressed point, optional, only for blsag)
     #[serde(rename = "i", skip_serializing_if = "Option::is_none", default)]
     key_image: Option<Vec<u8>>,
+    /// Linkability flag (optional, only for blsag with local linkability)
+    #[serde(rename = "l", skip_serializing_if = "Option::is_none", default)]
+    linkability_flag: Option<Vec<u8>>,
 }
 
 /// Errors related to compact signature serialization and deserialization
@@ -141,6 +144,7 @@ impl TryFrom<&CompactSignature> for SerializedSignatureData {
                     c0: sig.c0.to_bytes().to_vec(),
                     s: sig.s.iter().map(|s| s.to_bytes().to_vec()).collect(),
                     key_image: None,
+                    linkability_flag: None, // No key image for SAG
                 })
             }
             CompactSignature::Blsag(sig, key_image) => {
@@ -164,6 +168,7 @@ impl TryFrom<&CompactSignature> for SerializedSignatureData {
                     c0: sig.c0.to_bytes().to_vec(),
                     s: sig.s.iter().map(|s| s.to_bytes().to_vec()).collect(),
                     key_image: Some(key_image_bytes),
+                    linkability_flag: sig.linkability_flag.clone(),
                 })
             }
         }
@@ -244,7 +249,11 @@ impl TryFrom<SerializedSignatureData> for CompactSignature {
                     }
                 };
 
-                let sig = BlsagSignatureBinary { c0, s: s_scalars };
+                let sig = BlsagSignatureBinary {
+                    c0,
+                    s: s_scalars,
+                    linkability_flag: data.linkability_flag,
+                };
                 let key_image = KeyImage(key_image_point);
                 Ok(CompactSignature::Blsag(sig, key_image))
             }
@@ -305,9 +314,42 @@ mod tests {
             ring_hex.iter().map(|h| hex_to_point(h).unwrap()).collect();
         let signer_priv = hex_to_scalar(&kp2.private_key_hex).unwrap();
         let message = b"test message for blsag";
+        let linkability_flag: Option<&[u8]> = None;
 
         let (original_sig, original_key_image) =
-            sign_blsag_binary(message, &signer_priv, &ring_points).unwrap();
+            sign_blsag_binary(message, &signer_priv, &ring_points, &linkability_flag).unwrap();
+        let compact_sig = CompactSignature::Blsag(original_sig.clone(), original_key_image.clone());
+
+        let serialized = compact_sig.serialize().unwrap();
+        println!("Serialized BLSAG: {}", serialized);
+        assert!(serialized.starts_with("ringA"));
+
+        let deserialized = CompactSignature::deserialize(&serialized).unwrap();
+        assert_eq!(compact_sig, deserialized);
+
+        match deserialized {
+            CompactSignature::Blsag(deserialized_sig, deserialized_key_image) => {
+                assert_eq!(original_sig.c0, deserialized_sig.c0);
+                assert_eq!(original_sig.s, deserialized_sig.s);
+                assert_eq!(original_key_image, deserialized_key_image); // KeyImage derives PartialEq
+            }
+            _ => panic!("Deserialized into wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_blsag_serialization_deserialization_with_linkability_flag() {
+        let kp1 = generate_keypair_hex("compressed");
+        let kp2 = generate_keypair_hex("compressed");
+        let ring_hex = vec![kp1.public_key_hex, kp2.public_key_hex.clone()];
+        let ring_points: Vec<ProjectivePoint> =
+            ring_hex.iter().map(|h| hex_to_point(h).unwrap()).collect();
+        let signer_priv = hex_to_scalar(&kp2.private_key_hex).unwrap();
+        let message = b"test message for blsag";
+        let linkability_flag: Option<&[u8]> = Some(b"linkability flag");
+
+        let (original_sig, original_key_image) =
+            sign_blsag_binary(message, &signer_priv, &ring_points, &linkability_flag).unwrap();
         let compact_sig = CompactSignature::Blsag(original_sig.clone(), original_key_image.clone());
 
         let serialized = compact_sig.serialize().unwrap();
@@ -385,6 +427,7 @@ mod tests {
             c0: vec![0u8; 32],
             s: vec![vec![0u8; 32]],
             key_image: None,
+            linkability_flag: None,
         };
         let invalid_variant_cbor = serde_cbor::to_vec(&data).unwrap();
         let invalid_variant_b64 =
@@ -406,6 +449,7 @@ mod tests {
             c0: vec![0u8; 32],
             s: vec![vec![0u8; 32]],
             key_image: Some(vec![2u8; 33]), // Unexpected KI for SAG
+            linkability_flag: None,
         };
         let unexpected_ki_cbor = serde_cbor::to_vec(&sag_data_with_ki).unwrap();
         let unexpected_ki_b64 =
@@ -422,6 +466,7 @@ mod tests {
             c0: vec![0u8; 32],
             s: vec![vec![0u8; 32]],
             key_image: None, // Missing KI for BLSAG
+            linkability_flag: None,
         };
         let missing_ki_cbor = serde_cbor::to_vec(&blsag_data_no_ki).unwrap();
         let missing_ki_b64 =

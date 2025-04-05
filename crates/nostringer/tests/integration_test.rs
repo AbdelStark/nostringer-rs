@@ -231,6 +231,7 @@ fn test_blsag_sign_verify_round_trip() {
     let ring_size = 3;
     let keypairs = generate_keypairs(ring_size, "compressed"); // Use any valid format
     let ring_pubkeys_hex = get_public_keys(&keypairs);
+    let linkability_flag = None; // No linkability needed for this test
 
     // 2. Choose Signer & Message
     let signer_index = 1;
@@ -238,7 +239,12 @@ fn test_blsag_sign_verify_round_trip() {
     let message = b"Test message for bLSAG round trip";
 
     // 3. Sign using bLSAG (hex version)
-    let sign_result = sign_blsag_hex(message, &signer_kp.private_key_hex, &ring_pubkeys_hex);
+    let sign_result = sign_blsag_hex(
+        message,
+        &signer_kp.private_key_hex,
+        &ring_pubkeys_hex,
+        &linkability_flag,
+    );
     assert!(
         sign_result.is_ok(),
         "bLSAG signing failed: {:?}",
@@ -261,17 +267,30 @@ fn test_blsag_sign_verify_round_trip() {
 }
 
 #[test]
-fn test_blsag_linkability() {
+fn test_blsag_global_linkability() {
     // 1. Setup
     let keypairs = generate_keypairs(4, "compressed");
     let ring = get_public_keys(&keypairs);
     let signer_kp = &keypairs[1]; // Choose a signer
     let message1 = b"First message";
     let message2 = b"Second message";
+    let linkability_flag = None; // Enable global linkability
 
     // 2. Sign two different messages with the SAME key
-    let (sig1, ki1_hex) = sign_blsag_hex(message1, &signer_kp.private_key_hex, &ring).unwrap();
-    let (sig2, ki2_hex) = sign_blsag_hex(message2, &signer_kp.private_key_hex, &ring).unwrap();
+    let (sig1, ki1_hex) = sign_blsag_hex(
+        message1,
+        &signer_kp.private_key_hex,
+        &ring,
+        &linkability_flag,
+    )
+    .unwrap();
+    let (sig2, ki2_hex) = sign_blsag_hex(
+        message2,
+        &signer_kp.private_key_hex,
+        &ring,
+        &linkability_flag,
+    )
+    .unwrap();
 
     // 3. Verify both signatures are valid
     assert!(verify_blsag_hex(&sig1, &ki1_hex, message1, &ring).unwrap());
@@ -288,8 +307,74 @@ fn test_blsag_linkability() {
 
     // 5. Sign message 1 with a DIFFERENT key
     let different_signer_kp = &keypairs[2];
-    let (sig3, ki3_hex) =
-        sign_blsag_hex(message1, &different_signer_kp.private_key_hex, &ring).unwrap();
+    let (sig3, ki3_hex) = sign_blsag_hex(
+        message1,
+        &different_signer_kp.private_key_hex,
+        &ring,
+        &linkability_flag,
+    )
+    .unwrap();
+
+    // 6. Verify this signature is also valid
+    assert!(verify_blsag_hex(&sig3, &ki3_hex, message1, &ring).unwrap());
+
+    // 7. Check key images DO NOT MATCH
+    assert_ne!(
+        ki1_hex, ki3_hex,
+        "Key images should differ for different signers"
+    );
+    let ki3 = KeyImage::from_hex(&ki3_hex).unwrap();
+    assert!(!key_images_match(&ki1, &ki3));
+}
+
+#[test]
+fn test_blsag_local_linkability() {
+    // 1. Setup
+    let keypairs = generate_keypairs(4, "compressed");
+    let ring = get_public_keys(&keypairs);
+    let signer_kp = &keypairs[1]; // Choose a signer
+    let message1 = b"First message";
+    let message2 = b"Second message";
+    let linkability_flag = Some("Some random flag".to_string()); // Enable local linkability
+
+    // 2. Sign two different messages with the SAME key
+    let (sig1, ki1_hex) = sign_blsag_hex(
+        message1,
+        &signer_kp.private_key_hex,
+        &ring,
+        &linkability_flag,
+    )
+    .unwrap();
+    let (sig2, ki2_hex) = sign_blsag_hex(
+        message2,
+        &signer_kp.private_key_hex,
+        &ring,
+        &linkability_flag,
+    )
+    .unwrap();
+
+    // 3. Verify both signatures are valid
+    assert!(verify_blsag_hex(&sig1, &ki1_hex, message1, &ring).unwrap());
+    assert!(verify_blsag_hex(&sig2, &ki2_hex, message2, &ring).unwrap());
+
+    // 4. Check key images MATCH
+    assert_eq!(
+        ki1_hex, ki2_hex,
+        "Key images should match for the same signer"
+    );
+    let ki1 = KeyImage::from_hex(&ki1_hex).unwrap();
+    let ki2 = KeyImage::from_hex(&ki2_hex).unwrap();
+    assert!(key_images_match(&ki1, &ki2));
+
+    // 5. Sign message 1 with a DIFFERENT key
+    let different_signer_kp = &keypairs[2];
+    let (sig3, ki3_hex) = sign_blsag_hex(
+        message1,
+        &different_signer_kp.private_key_hex,
+        &ring,
+        &linkability_flag,
+    )
+    .unwrap();
 
     // 6. Verify this signature is also valid
     assert!(verify_blsag_hex(&sig3, &ki3_hex, message1, &ring).unwrap());
@@ -309,9 +394,16 @@ fn test_blsag_verification_fail_tampered_message() {
     let ring = get_public_keys(&keypairs);
     let signer_kp = &keypairs[0];
     let message = b"Original BLSAG message";
+    let linkability_flag = None;
 
     // Sign
-    let (sig, ki_hex) = sign_blsag_hex(message, &signer_kp.private_key_hex, &ring).unwrap();
+    let (sig, ki_hex) = sign_blsag_hex(
+        message,
+        &signer_kp.private_key_hex,
+        &ring,
+        &linkability_flag,
+    )
+    .unwrap();
 
     // Verify with tampered message
     let tampered_message = b"Tampered BLSAG message";
@@ -329,13 +421,26 @@ fn test_blsag_verification_fail_wrong_key_image() {
     let ring = get_public_keys(&keypairs);
     let signer_kp = &keypairs[0];
     let message = b"Message for key image test";
+    let linkability_flag = None;
 
     // Sign
-    let (sig, _ki_hex) = sign_blsag_hex(message, &signer_kp.private_key_hex, &ring).unwrap();
+    let (sig, _ki_hex) = sign_blsag_hex(
+        message,
+        &signer_kp.private_key_hex,
+        &ring,
+        &linkability_flag,
+    )
+    .unwrap();
 
     // Generate a key image from a DIFFERENT key
     let different_kp = &keypairs[1];
-    let (_, wrong_ki_hex) = sign_blsag_hex(message, &different_kp.private_key_hex, &ring).unwrap();
+    let (_, wrong_ki_hex) = sign_blsag_hex(
+        message,
+        &different_kp.private_key_hex,
+        &ring,
+        &linkability_flag,
+    )
+    .unwrap();
 
     // Verify with the wrong key image (should fail)
     let is_valid = verify_blsag_hex(&sig, &wrong_ki_hex, message, &ring)
@@ -352,9 +457,16 @@ fn test_blsag_verification_fail_invalid_key_image_format() {
     let ring = get_public_keys(&keypairs);
     let signer_kp = &keypairs[0];
     let message = b"Message for key image test";
+    let linkability_flag = None;
 
     // Sign
-    let (sig, _ki_hex) = sign_blsag_hex(message, &signer_kp.private_key_hex, &ring).unwrap();
+    let (sig, _ki_hex) = sign_blsag_hex(
+        message,
+        &signer_kp.private_key_hex,
+        &ring,
+        &linkability_flag,
+    )
+    .unwrap();
 
     // Verify with an invalid hex string for key image
     let invalid_ki_hex = "invalid-hex-string";

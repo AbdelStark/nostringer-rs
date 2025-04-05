@@ -1,6 +1,8 @@
 #[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
 
+use zerocopy::IntoBytes;
+
 // Re-export the core types and functions needed for WASM
 #[cfg(feature = "wasm")]
 use crate::{
@@ -12,6 +14,7 @@ use crate::{
     sign_compact_sag,
     verify_compact,
     CompactSignature,
+    SignatureVariant,
 };
 
 /// Set up panic hook for better error messages in WASM
@@ -61,6 +64,7 @@ pub struct WasmBlsagSignature {
     c0: String,
     s: Box<[JsValue]>,
     key_image: String,
+    linkability_flag: Option<String>,
 }
 
 #[cfg(feature = "wasm")]
@@ -68,8 +72,18 @@ pub struct WasmBlsagSignature {
 impl WasmBlsagSignature {
     /// Creates a new BlsagSignature from components
     #[wasm_bindgen(constructor)]
-    pub fn new(c0: String, s: Box<[JsValue]>, key_image: String) -> WasmBlsagSignature {
-        WasmBlsagSignature { c0, s, key_image }
+    pub fn new(
+        c0: String,
+        s: Box<[JsValue]>,
+        key_image: String,
+        linkability_flag: Option<String>,
+    ) -> WasmBlsagSignature {
+        WasmBlsagSignature {
+            c0,
+            s,
+            key_image,
+            linkability_flag,
+        }
     }
 
     /// Gets the c0 value
@@ -217,6 +231,7 @@ pub fn wasm_sign_blsag(
     message: &[u8],
     private_key_hex: &str,
     ring_pubkeys: Box<[JsValue]>,
+    linkability_flag: JsValue,
 ) -> Result<WasmBlsagSignature, JsValue> {
     // Convert JsValue array to Vec<String>
     let ring_pubkeys_vec: Vec<String> = ring_pubkeys
@@ -227,9 +242,25 @@ pub fn wasm_sign_blsag(
         })
         .collect::<Result<Vec<String>, JsValue>>()?;
 
+    // convert linkability_flag to &Option<String>
+    let linkability_flag = if linkability_flag.is_null() || linkability_flag.is_undefined() {
+        None
+    } else {
+        Some(
+            linkability_flag
+                .as_string()
+                .ok_or_else(|| JsValue::from_str("Linkability flag must be a string"))?,
+        )
+    };
+
     // Call the Rust function
-    let (signature, key_image) = sign_blsag_hex(message, private_key_hex, &ring_pubkeys_vec)
-        .map_err(|e| JsValue::from_str(&format!("Error: {}", e)))?;
+    let (signature, key_image) = sign_blsag_hex(
+        message,
+        private_key_hex,
+        &ring_pubkeys_vec,
+        &linkability_flag,
+    )
+    .map_err(|e| JsValue::from_str(&format!("Error: {}", e)))?;
 
     // Convert s values to JsValue array
     let s_values: Vec<JsValue> = signature.s.iter().map(|s| JsValue::from_str(s)).collect();
@@ -238,6 +269,7 @@ pub fn wasm_sign_blsag(
         c0: signature.c0,
         s: s_values.into_boxed_slice(),
         key_image,
+        linkability_flag: linkability_flag.clone(),
     })
 }
 
@@ -271,6 +303,7 @@ pub fn wasm_verify_blsag(
     let rust_signature = crate::types::BlsagSignature {
         c0: signature.c0.clone(),
         s: s_values,
+        linkability_flag: signature.linkability_flag.clone(),
     };
 
     // Call the Rust function
@@ -330,7 +363,31 @@ pub fn wasm_sign_compact_blsag(
     message: &[u8],
     private_key_hex: &str,
     ring_pubkeys: Box<[JsValue]>,
+    signature_variant_str: &str,
+    linkability_flag: JsValue,
 ) -> Result<String, JsValue> {
+    // Convert string to SignatureVariant
+    let signature_variant = match signature_variant_str {
+        "Blsag" => SignatureVariant::Blsag,
+        // For BlsagWithFlag we need the additional parameter
+        "BlsagWithFlag" => {
+            // Parse the linkability flag if provided
+            if linkability_flag.is_null() || linkability_flag.is_undefined() {
+                return Err(JsValue::from_str(
+                    "Linkability flag is required for 'withflag' variant",
+                ));
+            }
+
+            let flag = match linkability_flag.as_string() {
+                Some(s) => s,
+                None => return Err(JsValue::from_str("Linkability flag must be a string")),
+            };
+
+            SignatureVariant::BlsagWithFlag(flag)
+        }
+        _ => return Err(JsValue::from_str("Invalid signature variant")),
+    };
+
     // Convert JsValue array to Vec<String>
     let ring_pubkeys_vec: Vec<String> = ring_pubkeys
         .iter()
@@ -341,8 +398,13 @@ pub fn wasm_sign_compact_blsag(
         .collect::<Result<Vec<String>, JsValue>>()?;
 
     // Call the Rust compact signature function
-    sign_compact_blsag(message, private_key_hex, &ring_pubkeys_vec)
-        .map_err(|e| JsValue::from_str(&format!("Error: {}", e)))
+    sign_compact_blsag(
+        message,
+        private_key_hex,
+        &ring_pubkeys_vec,
+        &signature_variant,
+    )
+    .map_err(|e| JsValue::from_str(&format!("Error: {}", e)))
 }
 
 /// Verify a compact signature (both SAG and BLSAG types)
@@ -458,10 +520,17 @@ pub fn wasm_deserialize_compact_blsag(
             let c0_bytes_array = binary_sig.c0.to_bytes();
             let c0_bytes: &[u8] = c0_bytes_array.as_ref();
 
+            // Convert linkability flag to Option<String>
+            let linkability_flag = binary_sig
+                .linkability_flag
+                .as_ref()
+                .map(|flag| String::from_utf8_lossy(flag.as_bytes()).to_string());
+
             Ok(WasmBlsagSignature {
                 c0: hex::encode(c0_bytes),
                 s: s_values.into_boxed_slice(),
                 key_image: key_image.to_hex(),
+                linkability_flag,
             })
         }
         _ => Err(JsValue::from_str("Error: Not a BLSAG signature")),
@@ -560,10 +629,16 @@ pub fn wasm_serialize_blsag_signature(signature: &WasmBlsagSignature) -> Result<
         .collect::<Result<Vec<k256::Scalar>, _>>()
         .map_err(|e| JsValue::from_str(&format!("Error parsing s values: {}", e)))?;
 
+    let linkability_flag = signature
+        .linkability_flag
+        .as_ref()
+        .map(|flag| flag.as_bytes().to_vec());
+
     // Using BlsagSignatureBinary (same as RingSignatureBinary)
     let binary_signature = crate::types::BlsagSignatureBinary {
         c0: c0_scalar,
         s: s_scalars,
+        linkability_flag,
     };
 
     // Parse key image
@@ -617,8 +692,13 @@ mod tests {
         let message = b"test message";
 
         // Create a compact signature
-        let compact_sig = sign_compact_blsag(message, &keypair.private_key_hex, &ring_pubkeys)
-            .expect("Should sign successfully");
+        let compact_sig = sign_compact_blsag(
+            message,
+            &keypair.private_key_hex,
+            &ring_pubkeys,
+            SignatureVariant::Blsag,
+        )
+        .expect("Should sign successfully");
 
         // Deserialize to WASM type
         let wasm_sig =
@@ -644,8 +724,13 @@ mod tests {
         // Create both types of signatures
         let sag_sig = sign_compact_sag(message, &keypair.private_key_hex, &ring_pubkeys)
             .expect("Should sign SAG successfully");
-        let blsag_sig = sign_compact_blsag(message, &keypair.private_key_hex, &ring_pubkeys)
-            .expect("Should sign BLSAG successfully");
+        let blsag_sig = sign_compact_blsag(
+            message,
+            &keypair.private_key_hex,
+            &ring_pubkeys,
+            SignatureVariant::Blsag,
+        )
+        .expect("Should sign BLSAG successfully");
 
         // Test detection
         let sag_info =

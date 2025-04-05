@@ -8,13 +8,13 @@ use nostringer::{
 fn main() -> Result<(), Error> {
     println!(
         "{}",
-        "NOSTRINGER BLSAG EXAMPLE: Linkable Ring Signatures"
+        "NOSTRINGER BLSAG EXAMPLE: Locally Linkable Ring Signatures"
             .bold()
             .green()
     );
     println!(
         "{}",
-        "This example demonstrates the linkability property of bLSAG.".italic()
+        "This example demonstrates the impact of different linkability flags for bLSAG.".italic()
     );
     println!("{}", "Unlike regular SAG signatures, bLSAG signatures can detect if the same signer created multiple signatures.".italic());
     println!();
@@ -41,41 +41,44 @@ fn main() -> Result<(), Error> {
     println!("   Note: Other ring members cannot tell which member is signing!");
 
     // 3. Create a linkability flag specific to our context (optional)
-    let linkability_flag = None;
-    println!("\n{}", "3. Linkability flag".bold());
+    let linkability_flag = Some("blsag_local_linkability_example".to_string());
+    println!("\n{}", "3. Creating a linkability flag (optional)".bold());
     println!(
-        "   In this example, we are using the global linkability. For real-world applications,"
+        "   Linkability flag: {}",
+        linkability_flag
+            .clone()
+            .unwrap_or("None".to_string())
+            .bright_blue()
     );
-    println!("   you can create a linkability flag specific to your context.");
-    println!("   (see the blsag_local_linkability.rs example)");
 
     // 4. Sign two different messages with the same key
     println!(
         "\n{}",
-        "4. Signing two different messages with the same private key".bold()
+        "4. Signing the same message with the same private key and different linkability flags"
+            .bold()
     );
 
-    let message1 = b"First vote: Approve proposal A";
+    let message = b"Stay safe, Stay anon !";
     println!(
-        "   First message: {}",
-        std::str::from_utf8(message1).unwrap().green()
+        "   Signed message: {}",
+        std::str::from_utf8(message).unwrap().green()
     );
 
     let (signature1, key_image1_hex) = sign_blsag_hex(
-        message1,
+        message,
         &signer_keypair.private_key_hex,
         &ring_pubkeys,
-        &linkability_flag,
+        &linkability_flag, // Linkability flag for local linkability
     )?;
 
     let key_image1 = KeyImage::from_hex(&key_image1_hex)?;
     println!(
-        "   Signature created with key image: {}",
+        "   Signature 1 created with key image: {}",
         key_image1_hex[0..16].bright_magenta()
     );
 
     // Verify first signature
-    let is_valid1 = verify_blsag_hex(&signature1, &key_image1_hex, message1, &ring_pubkeys)?;
+    let is_valid1 = verify_blsag_hex(&signature1, &key_image1_hex, message, &ring_pubkeys)?;
     println!(
         "   Verification result: {}",
         if is_valid1 {
@@ -86,17 +89,11 @@ fn main() -> Result<(), Error> {
     );
 
     // Sign second message
-    let message2 = b"Second vote: Approve proposal B";
-    println!(
-        "\n   Second message: {}",
-        std::str::from_utf8(message2).unwrap().green()
-    );
-
     let (signature2, key_image2_hex) = sign_blsag_hex(
-        message2,
+        message,
         &signer_keypair.private_key_hex,
         &ring_pubkeys,
-        &linkability_flag,
+        &None, // No linkability flag
     )?;
 
     let key_image2 = KeyImage::from_hex(&key_image2_hex)?;
@@ -106,50 +103,10 @@ fn main() -> Result<(), Error> {
     );
 
     // Verify second signature
-    let is_valid2 = verify_blsag_hex(&signature2, &key_image2_hex, message2, &ring_pubkeys)?;
+    let is_valid2 = verify_blsag_hex(&signature2, &key_image2_hex, message, &ring_pubkeys)?;
     println!(
         "   Verification result: {}",
         if is_valid2 {
-            "Valid ✓".green()
-        } else {
-            "Invalid ✗".red()
-        }
-    );
-
-    // 5. Sign a third message with a different ring member
-    println!(
-        "\n{}",
-        "5. Signing a third message with a DIFFERENT private key".bold()
-    );
-
-    let different_signer_index = 4; // Use a different member
-    let different_signer = &keypairs[different_signer_index];
-
-    let message3 = b"Third vote: Approve proposal C";
-    println!(
-        "   Third message: {}",
-        std::str::from_utf8(message3).unwrap().green()
-    );
-    println!("   Signing with Ring Member {}", different_signer_index + 1);
-
-    let (signature3, key_image3_hex) = sign_blsag_hex(
-        message3,
-        &different_signer.private_key_hex,
-        &ring_pubkeys,
-        &linkability_flag,
-    )?;
-
-    let key_image3 = KeyImage::from_hex(&key_image3_hex)?;
-    println!(
-        "   Signature created with key image: {}",
-        key_image3_hex[0..16].bright_magenta()
-    );
-
-    // Verify third signature
-    let is_valid3 = verify_blsag_hex(&signature3, &key_image3_hex, message3, &ring_pubkeys)?;
-    println!(
-        "   Verification result: {}",
-        if is_valid3 {
             "Valid ✓".green()
         } else {
             "Invalid ✗".red()
@@ -162,24 +119,14 @@ fn main() -> Result<(), Error> {
         "6. Detecting same signer through key image comparison".bold()
     );
 
-    let same_key_used_1_2 = key_images_match(&key_image1, &key_image2);
-    let same_key_used_1_3 = key_images_match(&key_image1, &key_image3);
-
+    let are_key_images_1_and_2_different = if key_images_match(&key_image1, &key_image2) {
+        "No ✗".red()
+    } else {
+        "Yes ✓".green()
+    };
     println!(
-        "   Are signatures 1 and 2 from the same key? {}",
-        if same_key_used_1_2 {
-            "YES ✓".green().bold()
-        } else {
-            "NO ✗".red()
-        }
-    );
-    println!(
-        "   Are signatures 1 and 3 from the same key? {}",
-        if same_key_used_1_3 {
-            "YES ✓".green()
-        } else {
-            "NO ✗".red().bold()
-        }
+        "   Are key images 1 and 2 different? {}",
+        are_key_images_1_and_2_different
     );
 
     // Explain the results

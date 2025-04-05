@@ -101,7 +101,7 @@ fn bench_blsag_sign(c: &mut Criterion) {
                 let message = b"Benchmark BLSAG signing with different ring sizes";
 
                 // Benchmark the sign_blsag_hex function
-                b.iter(|| sign_blsag_hex(message, signer_key, &ring).unwrap());
+                b.iter(|| sign_blsag_hex(message, signer_key, &ring, &None).unwrap());
             },
         );
     }
@@ -125,7 +125,8 @@ fn bench_blsag_verify(c: &mut Criterion) {
                 let message = b"Benchmark BLSAG verification with different ring sizes";
 
                 // Create a BLSAG signature and key image
-                let (signature, key_image) = sign_blsag_hex(message, signer_key, &ring).unwrap();
+                let (signature, key_image) =
+                    sign_blsag_hex(message, signer_key, &ring, &None).unwrap();
 
                 // Benchmark the verify_blsag_hex function
                 b.iter(|| verify_blsag_hex(&signature, &key_image, message, &ring).unwrap());
@@ -154,7 +155,7 @@ fn bench_blsag_sign_and_verify(c: &mut Criterion) {
                 // Benchmark both sign_blsag_hex and verify_blsag_hex
                 b.iter(|| {
                     let (signature, key_image) =
-                        sign_blsag_hex(message, signer_key, &ring).unwrap();
+                        sign_blsag_hex(message, signer_key, &ring, &None).unwrap();
                     verify_blsag_hex(&signature, &key_image, message, &ring).unwrap()
                 });
             },
@@ -190,7 +191,7 @@ fn bench_sag_vs_blsag(c: &mut Criterion) {
     // Benchmark BLSAG sign+verify
     group.bench_function("blsag_full_process", |b| {
         b.iter(|| {
-            let (signature, key_image) = sign_blsag_hex(message, signer_key, &ring).unwrap();
+            let (signature, key_image) = sign_blsag_hex(message, signer_key, &ring, &None).unwrap();
             verify_blsag_hex(&signature, &key_image, message, &ring).unwrap()
         });
     });
