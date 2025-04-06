@@ -11,8 +11,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-nostringer = { version = "0.1.8", features = ["wasm"] }
-#nostringer = { path = "../nostringer" }
+#nostringer = { version = "0.1.8", features = ["wasm"] }
+nostringer = { path = "../nostringer" }
 clap = { workspace = true }
 anyhow = { workspace = true }
 colored = { workspace = true }
