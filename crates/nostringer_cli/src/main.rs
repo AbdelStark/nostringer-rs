@@ -52,6 +52,10 @@ enum Commands {
         #[arg(short, long, default_value = "sag")]
         variant: String,
 
+        /// Optional: The linkability flag to use (default: None) (only works with variant = "blsag")
+        #[arg(short, long)]
+        linkability_flag: Option<String>,
+
         /// Optional: File path to save the signature to
         #[arg(short, long)]
         output: Option<PathBuf>,
@@ -111,14 +115,30 @@ fn main() -> Result<()> {
             private_key,
             ring,
             variant,
+            linkability_flag,
             output,
         } => {
             let ring_pubkeys = parse_keys_list(ring)?;
 
             // Parse the signature variant
             let sig_variant = match variant.to_lowercase().as_str() {
-                "sag" => SignatureVariant::Sag,
-                "blsag" => SignatureVariant::Blsag,
+                "sag" => {
+                    // Linkability flag is not applicable for SAG signatures
+                    if linkability_flag.is_some() {
+                        return Err(anyhow!(
+                            "Linkability flag is not supported for SAG variant."
+                        ));
+                    }
+
+                    SignatureVariant::Sag
+                }
+                "blsag" => match linkability_flag {
+                    // If a non empty linkability flag is provided, use it
+                    Some(flag) if !flag.is_empty() => {
+                        SignatureVariant::BlsagWithFlag(flag.to_string())
+                    }
+                    _ => SignatureVariant::Blsag,
+                },
                 _ => {
                     return Err(anyhow!(
                         "Invalid signature variant: {}. Use 'sag' or 'blsag'.",
@@ -127,7 +147,18 @@ fn main() -> Result<()> {
                 }
             };
 
-            println!("Signing with {} variant...", variant.to_uppercase());
+            match sig_variant {
+                SignatureVariant::BlsagWithFlag(_) => {
+                    println!(
+                        "Signing with BLSAG variant and linkability flag: '{}'...",
+                        linkability_flag.clone().unwrap_or(String::new())
+                    );
+                }
+                _ => {
+                    println!("Signing with {} variant...", variant.to_uppercase());
+                }
+            }
+
             let compact_signature =
                 nostringer::sign(message.as_bytes(), private_key, &ring_pubkeys, sig_variant)
                     .context("Failed to create signature")?;
@@ -411,9 +442,13 @@ fn run_blsag_demo() -> Result<()> {
     let message1 = "Vote for Proposal #1: Increase community budget";
     println!("\nFirst message: {}", message1.green());
 
-    let (signature1, key_image1_hex) =
-        sign_blsag_hex(message1.as_bytes(), &signer.private_key_hex, &ring_pubkeys)
-            .context("Failed to create first signature")?;
+    let (signature1, key_image1_hex) = sign_blsag_hex(
+        message1.as_bytes(),
+        &signer.private_key_hex,
+        &ring_pubkeys,
+        &None,
+    )
+    .context("Failed to create first signature")?;
 
     println!(
         "Created signature with key image: {}",
@@ -445,9 +480,13 @@ fn run_blsag_demo() -> Result<()> {
     let message2 = "Vote for Proposal #2: Fund development team";
     println!("\nSecond message: {}", message2.green());
 
-    let (signature2, key_image2_hex) =
-        sign_blsag_hex(message2.as_bytes(), &signer.private_key_hex, &ring_pubkeys)
-            .context("Failed to create second signature")?;
+    let (signature2, key_image2_hex) = sign_blsag_hex(
+        message2.as_bytes(),
+        &signer.private_key_hex,
+        &ring_pubkeys,
+        &None,
+    )
+    .context("Failed to create second signature")?;
 
     println!(
         "Created signature with key image: {}",
@@ -492,6 +531,7 @@ fn run_blsag_demo() -> Result<()> {
         message3.as_bytes(),
         &different_signer.private_key_hex,
         &ring_pubkeys,
+        &None,
     )
     .context("Failed to create third signature")?;
 
@@ -697,6 +737,7 @@ fn run_compact_sign_demo() -> Result<()> {
         message2.as_bytes(),
         &keypair2.private_key_hex,
         &ring_pubkeys,
+        &SignatureVariant::Blsag,
     )
     .context("Failed to create BLSAG compact signature")?;
 
@@ -884,6 +925,7 @@ fn run_big_ring_demo() -> Result<()> {
         message.as_bytes(),
         &signer_keypair.private_key_hex,
         &ring_pubkeys,
+        &None,
     )
     .context("Failed to create BLSAG signature")?;
 

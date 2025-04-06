@@ -988,30 +988,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nostringer"
-version = "0.1.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d5f0540f158520e88d7edd0cc4c0d0bbdf65e1a276a0b423ea320ee3b58c4df"
-dependencies = [
- "base64",
- "console_error_panic_hook",
- "getrandom",
- "hex",
- "js-sys",
- "k256",
- "nostr",
- "rand",
- "serde",
- "serde_bytes",
- "serde_cbor",
- "serde_json",
- "sha2",
- "subtle",
- "thiserror",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "nostringer_cli"
 version = "0.1.8"
 dependencies = [
@@ -1020,7 +996,7 @@ dependencies = [
  "colored",
  "hex",
  "nostr",
- "nostringer 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "nostringer",
  "rand",
  "serde_json",
 ]
