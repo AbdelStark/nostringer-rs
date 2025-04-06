@@ -210,9 +210,21 @@ fn main() -> Result<()> {
             // Try to get the signature variant for informational purposes
             match CompactSignature::deserialize(signature) {
                 Ok(compact_sig) => {
+                    let linkability_level: Option<String> = match &compact_sig {
+                        CompactSignature::Blsag(binary_blsag, _) => binary_blsag
+                            .linkability_flag
+                            .as_ref()
+                            .map(|linkability_flag| {
+                                String::from_utf8_lossy(linkability_flag).to_string()
+                            }),
+                        _ => None,
+                    };
                     println!(
-                        "Signature variant: {}",
-                        compact_sig.variant().to_uppercase().cyan()
+                        "Signature variant: {} {}",
+                        compact_sig.variant().to_uppercase().cyan(),
+                        linkability_level
+                            .map(|flag| format!("(linkability flag: '{}')", flag.yellow()))
+                            .unwrap_or_default()
                     );
                 }
                 Err(_) => {
